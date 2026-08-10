@@ -33,6 +33,31 @@ search_for_me
 
 ## How **Open URL** resolves what you select
 
+### Paths with spaces
+
+Put the cursor anywhere inside a path wrapped in **any** matched delimiter pair and the whole path is selected, spaces and all. All seven pairs behave identically:
+
+```
+'~/OneDrive/Q CST - ALL/Customers/3M'
+"~/OneDrive/Q CST - ALL/Customers/3M"
+`~/OneDrive/Q CST - ALL/Customers/3M`
+(~/OneDrive/Q CST - ALL/Customers/3M)
+[~/OneDrive/Q CST - ALL/Customers/3M]
+{~/OneDrive/Q CST - ALL/Customers/3M}
+<~/OneDrive/Q CST - ALL/Customers/3M>
+```
+
+Details:
+
+- The wrapper is stripped before resolution, so the path itself is what gets opened.
+- A deep-link suffix after the closing delimiter stays attached — `[my file.py]:42` opens `my file.py` at line 42.
+- When pairs nest, the innermost one wins: in `<a href='~/a b.txt'>` the cursor selects `~/a b.txt`.
+- A pair that opens *and* closes before the cursor isn't treated as a wrapper, so a Markdown checkbox (`- [ ] visit google.com`) still resolves `google.com` normally.
+- `${VAR}` braces are part of the path, never a delimiter pair — `${HOME}/Desktop` selects whole.
+- Backslash-escaped spaces (`~/a\ b.txt`) also work, unwrapped.
+
+### Resolution order
+
 After expanding the selection (using `delimiters`), Open URL tries the following in order. The first match wins.
 
 1. **File** — opens it in Sublime, or shows a menu (edit / reveal / new window / system open).
@@ -268,7 +293,7 @@ Open with **Preferences → Package Settings → Open URL → Settings**.
 
 | Setting | Default | Purpose |
 |---|---|---|
-| `delimiters` | `" \t\n\r\"'`` `,*<>[](){}` ` | Selection-expansion terminators (Markdown-friendly defaults). |
+| `delimiters` | `" \t\n\r\"'`` `,*<>[](){}` ` | Selection-expansion terminators (Markdown-friendly defaults). Text wrapped in any matched pair — `""` `''` ` `` ` `()` `[]` `{}` `<>` — selects whole, so paths with spaces work. |
 | `trailing_delimiters` | `";.:"` | Recursively stripped from the end of the URL/path. |
 | `web_browser` | `""` | Browser name (from [Python's `webbrowser` list](https://docs.python.org/3.3/library/webbrowser.html)). Empty = system default. |
 | `web_browser_path` | `""` | Explicit browser executable path. Overrides `web_browser`. |
@@ -316,8 +341,11 @@ Add `"open_url.disable_default_key_bindings": true` to your User `Preferences.su
 Tests run in plain Python (no Sublime Text instance required):
 
 ```sh
-py test_open_url.py
+py tests/test_open_url.py
+py -m pytest tests/test_open_url.py -q
 ```
+
+They live in `tests/` rather than the package root because Sublime Text loads every top-level `.py` as a plugin, which made it log `reloading plugin open-url.test_open_url` on every change.
 
 The test suite is the only check. Lint and type-check tooling (`isort`, `flake8`, `pyright`) and the `pre-push` hook that ran them were removed — see [docs/removed-dev-tooling.md](docs/removed-dev-tooling.md) to restore them.
 

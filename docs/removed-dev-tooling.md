@@ -8,7 +8,7 @@ configs were dead weight.
 Tests are the remaining check and run in plain Python, no Sublime instance:
 
 ```sh
-py test_open_url.py
+py tests/test_open_url.py
 ```
 
 To restore, recreate the files below and symlink the hook:
@@ -36,7 +36,9 @@ pyright
 python3 test_open_url.py
 ```
 
-Note: the README claimed this hook ran `black` too; the script never did.
+Note: the README claimed this hook ran `black` too; the script never did. The
+snippet above is verbatim from `3.0.1`; if restoring it, the test path is now
+`tests/test_open_url.py`.
 
 ## `.flake8`
 

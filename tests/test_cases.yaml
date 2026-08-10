@@ -34,6 +34,31 @@ selection_cases:
   - {label: deep-link-search-space, text: '/tmp/f.md:3:"hello world"', cursor: 18,
      expected: '/tmp/f.md:3:"hello world"'}
 
+  # paths with spaces wrapped in each enclosing pair (quotes AND brackets)
+  - {label: pair-single-quote, text: "'~/OneDrive/Q CST - ALL/3M'", cursor: 9, expected: "~/OneDrive/Q CST - ALL/3M"}
+  - {label: pair-double-quote, text: '"~/OneDrive/Q CST - ALL/3M"', cursor: 9, expected: "~/OneDrive/Q CST - ALL/3M"}
+  - {label: pair-backtick,     text: "`~/OneDrive/Q CST - ALL/3M`", cursor: 9, expected: "~/OneDrive/Q CST - ALL/3M"}
+  - {label: pair-brace,        text: "{~/OneDrive/Q CST - ALL/3M}", cursor: 9, expected: "~/OneDrive/Q CST - ALL/3M"}
+  - {label: pair-paren,        text: "(~/OneDrive/Q CST - ALL/3M)", cursor: 9, expected: "~/OneDrive/Q CST - ALL/3M"}
+  - {label: pair-bracket,      text: "[~/OneDrive/Q CST - ALL/3M]", cursor: 9, expected: "~/OneDrive/Q CST - ALL/3M"}
+  - {label: pair-angle,        text: "<~/OneDrive/Q CST - ALL/3M>", cursor: 9, expected: "~/OneDrive/Q CST - ALL/3M"}
+  # cursor late in the token (past a space) still grabs the whole wrapped path
+  - {label: pair-bracket-late, text: "[~/OneDrive/Q CST - ALL/3M]", cursor: 24, expected: "~/OneDrive/Q CST - ALL/3M"}
+  # innermost pair wins when pairs nest
+  - {label: pair-nested-inner, text: 'x ("~/a b/c.txt") y', cursor: 8, expected: "~/a b/c.txt"}
+  - {label: pair-in-html-attr, text: "<a href='~/a b.txt'>", cursor: 13, expected: "~/a b.txt"}
+  - {label: pair-in-json,      text: '{"path": "~/a b.txt"}', cursor: 13, expected: "~/a b.txt"}
+  # ${VAR} braces are part of the path, never a delimiter pair
+  - {label: var-brace-path,    text: "${HOME}/Desktop", cursor: 3,  expected: "${HOME}/Desktop"}
+  - {label: var-brace-late,    text: "${HOME}/Desktop", cursor: 12, expected: "${HOME}/Desktop"}
+  - {label: var-brace-deeplink, text: "${HOME}/a.txt:/^foo bar/", cursor: 18, expected: "${HOME}/a.txt:/^foo bar/"}
+  # markdown link targets
+  - {label: md-link-url,       text: "- [label](http://example.com) x", cursor: 20, expected: "http://example.com"}
+  - {label: md-link-path,      text: "see [docs](~/txt/notes.txt) here", cursor: 15, expected: "~/txt/notes.txt"}
+  # a pair that opens and closes before the cursor is not an enclosing pair
+  - {label: md-checkbox,       text: "- [ ] visit google.com now", cursor: 15, expected: "google.com"}
+  - {label: unmatched-opener,  text: "(notes.txt and more", cursor: 3,  expected: "notes.txt"}
+
   # cursor in surrounding text
   - {label: url-mid-sentence,   text: "boo google.com hoo",          cursor: 6, expected: "google.com"}
   - {label: word-at-cursor,     text: "love dog",                    cursor: 2, expected: "love"}     # cursor inside "love"

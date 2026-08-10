@@ -1,7 +1,9 @@
 // to specify your own, either edit this file, or copy/paste to open_url.sublime-settings file in your User folder
 // if there is an open_url.sublime-settings in the User folder, Sublime Text merges those settings with these
 {
-  // delimiters for expanding selection, these are markdown friendly
+  // delimiters for expanding selection, these are markdown friendly.
+  // text wrapped in any matched pair -- "" '' `` () [] {} <> -- is treated as one
+  // token, so a path containing spaces selects whole from any cursor position.
   "delimiters": " \t\n\r\"'`,*<>[](){}",
 
   // if these delimiting characters are seen at the end of the URL, they are removed, e.g. sublimetext.com.; becomes sublimetext.com

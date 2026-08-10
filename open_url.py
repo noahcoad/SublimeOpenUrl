@@ -11,6 +11,7 @@ Module entry points:
 	OpenUrlCommand.run / handle  — the resolution cascade (file -> folder -> web URL -> custom -> search)
 	parse_file_location          — splits ``path:LINE`` / ``:"text"`` / ``:/regex/`` / ``:N-M`` deep links
 	find_deep_link_span          — locates a deep-link token (spaces/quotes and all) under the cursor
+	ENCLOSING_PAIRS              — the matched delimiter pairs that let a spaced path select whole
 	apply_path_transform         — runs the ``copy_path_transform`` shell command
 	select_default_opener        — autoaction matcher for ``file_custom_commands`` / ``folder_custom_commands``
 
@@ -94,6 +95,134 @@ BUILTIN_COMMANDS: frozenset[str] = frozenset(
 		"add_to_project",
 	}
 )
+
+
+# Enclosing delimiter pairs. Text wrapped in any of these is treated as a single
+# token by find_selection, so a path containing spaces selects whole. Symmetric
+# pairs (quotes) can't nest and use a nearest-neighbor scan; bracket pairs are
+# depth-matched. Single source of truth: TOKEN_TERMINATORS, _RESELECTION_BREAKERS,
+# strip_enclosing_pair, and _DEEP_LINK_TOKEN_RE all derive from this.
+ENCLOSING_PAIRS: tuple[tuple[str, str], ...] = (
+	('"', '"'),
+	("'", "'"),
+	("`", "`"),
+	("(", ")"),
+	("[", "]"),
+	("{", "}"),
+	("<", ">"),
+)
+
+# Chars that end a bare (unwrapped) token during selection expansion.
+#
+# This is find_selection's set; the ``delimiters`` setting is get_selection's. They
+# agree on every char except three, each deliberate: find_selection scans a single
+# line so '\n'/'\r' can't occur, and '*' is excluded so a regex deep link like
+# ``f.txt:/^\s*http/`` isn't split mid-pattern.
+TOKEN_TERMINATORS: frozenset[str] = frozenset("\t ,") | frozenset(c for pair in ENCLOSING_PAIRS for c in pair)
+
+# ``${VAR}`` is a path chunk, not a brace pair — its braces are never delimiters.
+# Env var names hold no whitespace, so a brace group containing any is a real brace
+# pair, not an expansion. Single source of truth, also embedded in _DEEP_LINK_TOKEN_RE.
+_VAR_BRACE_SRC = r"\$\{[^{}\s]*\}"
+_VAR_BRACE_RE = re.compile(_VAR_BRACE_SRC)
+
+
+def _var_brace_indices(text: str) -> frozenset[int]:
+	"""Indices of the ``{`` and ``}`` chars of every ``${VAR}`` expansion in ``text``."""
+	out: set[int] = set()
+	for m in _VAR_BRACE_RE.finditer(text):
+		out.add(m.start() + 1)
+		out.add(m.end() - 1)
+	return frozenset(out)
+
+
+def strip_enclosing_pair(text: str) -> str:
+	"""Strip one matched enclosing pair (quote or bracket) from around ``text``."""
+	if len(text) >= 2:
+		for open_ch, close_ch in ENCLOSING_PAIRS:
+			if text[0] == open_ch and text[-1] == close_ch:
+				return text[1:-1]
+	return text
+
+
+def _symmetric_span(text: str, col: int, ch: str) -> tuple[int, int] | None:
+	"""Span of the nearest ``ch``-delimited pair in ``text`` surrounding ``col``."""
+	i = text.rfind(ch, 0, col)
+	if i == -1:
+		return None
+	j = text.find(ch, max(col, i + 1))
+	return None if j == -1 else (i, j)
+
+
+def _scan_for_unmatched(text: str, positions: range, nest_ch: str, want_ch: str, skip: frozenset[int]) -> int:
+	"""First index in ``positions`` holding a ``want_ch`` not closed by a nested ``nest_ch``.
+
+	Returns -1 if there is none. Indices in ``skip`` are ignored (``${VAR}`` braces).
+	"""
+	depth = 0
+	for i in positions:
+		if i in skip:
+			continue
+		if text[i] == nest_ch:
+			depth += 1
+		elif text[i] == want_ch:
+			if depth == 0:
+				return i
+			depth -= 1
+	return -1
+
+
+def _bracket_span(text: str, col: int, open_ch: str, close_ch: str, skip: frozenset[int]) -> tuple[int, int] | None:
+	"""Span of the innermost ``open_ch``/``close_ch`` pair in ``text`` containing ``col``.
+
+	Depth-matched in both directions so a pair that opens *and* closes before the
+	cursor (a markdown ``[ ]`` checkbox, say) isn't mistaken for an opener.
+	"""
+	start = _scan_for_unmatched(text, range(min(col, len(text)) - 1, -1, -1), close_ch, open_ch, skip)
+	if start == -1:
+		return None
+	end = _scan_for_unmatched(text, range(col, len(text)), open_ch, close_ch, skip)
+	return None if end == -1 else (start, end)
+
+
+def _starts_loc_suffix(nxt: str, after: str) -> bool:
+	"""True if ``':' + nxt`` begins a deep-link suffix (line number, ``"text"``, or ``/regex/``)."""
+	return nxt.isdigit() or nxt == '"' or (nxt == "/" and after != "/")
+
+
+def find_enclosing_span(line: str, col: int) -> tuple[int, int] | None:
+	"""Span of the token delimited by the innermost enclosing pair around ``col``.
+
+	Lets a path containing spaces select whole from any cursor position inside it.
+	Returns the span *inside* the delimiters, or None when the cursor isn't within
+	any pair. Exception: when a deep-link suffix follows the closing delimiter
+	(``[my file.py]:42``), the wrapper is kept and the span runs through the
+	suffix — ``parse_file_location`` strips the pair later.
+	"""
+	skip = _var_brace_indices(line)
+	spans = []
+	for open_ch, close_ch in ENCLOSING_PAIRS:
+		span = (
+			_symmetric_span(line, col, open_ch)
+			if open_ch == close_ch
+			else _bracket_span(line, col, open_ch, close_ch, skip)
+		)
+		if span is not None:
+			spans.append(span)
+	if not spans:
+		return None
+
+	# innermost (shortest) pair wins, so `"a (b c) d"` grabs the parens, not the quotes
+	start, close = min(spans, key=lambda sp: sp[1] - sp[0])
+	after = close + 1
+	if after + 1 < len(line) and line[after] == ":" and _starts_loc_suffix(
+		line[after + 1], line[after + 2 : after + 3]
+	):
+		end = after + 1
+		while end < len(line) and line[end] not in TOKEN_TERMINATORS:
+			end += 1
+		return (start, end)
+	return (start + 1, close)
 
 
 def prepend_scheme(s: str) -> str:
@@ -214,8 +343,15 @@ def find_deep_link_span(line: str, col: int) -> tuple[int, int] | None:
 
 # path (no whitespace) + optional :N + :/regex/ or :"text"; body may hold spaces/quotes.
 # Body must be non-empty and not start with '/', so a URL's '://' can't match.
+# The path part excludes every enclosing delimiter, except that a whole ``${VAR}``
+# expansion counts as a path chunk. The lookbehind requires the token to start at a
+# line/token boundary (i.e. right after an opening delim, comma, or whitespace).
+_PATH_EXCLUDED = re.escape("".join(sorted(TOKEN_TERMINATORS - {"\t", " "})))
+_OPENERS = re.escape("," + "".join(sorted({open_ch for open_ch, _ in ENCLOSING_PAIRS})))
 _DEEP_LINK_TOKEN_RE = re.compile(
-	r"""(?<![^\s"'`<,\[\](])[^\s"'`<>,\[\]()]+?(?::\d+)?:(?:/(?!/)(?:[^/\\]|\\.)+/|"(?:[^"\\]|\\.)+")"""
+	r"(?<![^\s" + _OPENERS + r"])"
+	r"(?:" + _VAR_BRACE_SRC + r"|[^\s" + _PATH_EXCLUDED + r"])+?"
+	r"(?::\d+)?:(?:/(?!/)(?:[^/\\]|\\.)+/|\"(?:[^\"\\]|\\.)+\")"
 )
 
 
@@ -401,9 +537,8 @@ class OpenUrlCommand(sublime_plugin.TextCommand):
 		if len(urls) > 1:
 			show_menu = False
 		for url in urls:
-			# strip enclosing quotes/backticks if the entire selection is wrapped
-			if len(url) >= 2 and url[0] == url[-1] and url[0] in ('"', "'", "`"):
-				url = url[1:-1]
+			# strip an enclosing delimiter pair if the entire selection is wrapped
+			url = strip_enclosing_pair(url)
 			# un-escape backslash-escaped spaces (so "hello\ world.txt" -> "hello world.txt")
 			url = url.replace("\\ ", " ")
 			url = strip_file_scheme(url)
@@ -486,8 +621,9 @@ class OpenUrlCommand(sublime_plugin.TextCommand):
 		return sel.strip()
 
 	def find_selection(self, region=None) -> "sublime.Region":
-		"""Smarter expansion than get_selection: handles enclosing quotes/backticks
-		and deep-link tokens (path:42, path:"text", path:/regex/).
+		"""Smarter expansion than get_selection: handles enclosing delimiter pairs
+		(quotes, backticks, brackets) and deep-link tokens (path:42, path:"text",
+		path:/regex/).
 		"""
 		s = region if region is not None else self.view.sel()[0]
 		start = s.a
@@ -497,104 +633,71 @@ class OpenUrlCommand(sublime_plugin.TextCommand):
 			return sublime.Region(start, end)
 
 		view_size = self.view.size()
-		terminator = list("\t\"'`><, []()")
+		terminator = TOKEN_TERMINATORS
 
 		# A deep link whose regex/search body holds spaces or quotes can't be found by
 		# either branch below, so match the whole token on the line first.
 		line_region = self.view.line(start)
-		span = find_deep_link_span(self.view.substr(line_region), start - line_region.begin())
+		line_text = self.view.substr(line_region)
+		line_begin = line_region.begin()
+		col = start - line_begin
+		span = find_deep_link_span(line_text, col)
 		if span is not None:
-			return sublime.Region(line_region.begin() + span[0], line_region.begin() + span[1])
+			return sublime.Region(line_begin + span[0], line_begin + span[1])
 
-		# If cursor is inside an enclosing quote/backtick, expand to the matching pair.
-		found_enclosing = False
-		for delim in ('"', "'", "`"):
-			i = start
-			while i > 0 and not (self.view.classify(i) & sublime.CLASS_LINE_START):
-				if self.view.substr(i - 1) == delim:
-					j = start
-					while j < view_size:
-						if self.view.substr(j) == delim:
-							after_close = j + 1
-							if (
-								after_close + 1 < view_size
-								and self.view.substr(after_close) == ":"
-								and (
-									self.view.substr(after_close + 1).isdigit()
-									or self.view.substr(after_close + 1) == '"'
-									or (
-										self.view.substr(after_close + 1) == "/"
-										and (
-											after_close + 2 >= view_size
-											or self.view.substr(after_close + 2) != "/"
-										)
-									)
-								)
-							):
-								suffix_end = after_close + 1
-								while (
-									suffix_end < view_size
-									and self.view.substr(suffix_end) not in list("\t ><,[]()'\"")
-									and not (self.view.classify(suffix_end) & sublime.CLASS_LINE_END)
-								):
-									suffix_end += 1
-								start = i - 1
-								end = suffix_end
-							else:
-								start, end = i, j
-							found_enclosing = True
-							break
-						if self.view.classify(j) & sublime.CLASS_LINE_END:
-							break
-						j += 1
-					break
-				i -= 1
-			if found_enclosing:
+		# If the cursor sits inside an enclosing pair, that pair defines the token.
+		enclosing = find_enclosing_span(line_text, col)
+		if enclosing is not None:
+			return sublime.Region(line_begin + enclosing[0], line_begin + enclosing[1])
+
+		skip = _var_brace_indices(line_text)
+
+		# ${VAR} braces are part of the path, so they never terminate the token
+		def is_term(pos: int) -> bool:
+			"""True if the char at view position ``pos`` ends the bare token."""
+			return self.view.substr(pos) in terminator and (pos - line_begin) not in skip
+
+		# walk back to nearest terminator (treat backslash-escaped chars as part of the token)
+		while (
+			start > 0
+			and (not is_term(start - 1) or (start >= 2 and self.view.substr(start - 2) == "\\"))
+			and not (self.view.classify(start) & sublime.CLASS_LINE_START)
+		):
+			start -= 1
+
+		# walk forward; once past a deep-link ':' separator, bracketed contents
+		# ("..." or /.../) keep being included until the closing delim.
+		loc_delim: str | None = None
+		passed_sep = False
+		in_url = "://" in self.view.substr(sublime.Region(start, end))
+		while end < view_size:
+			if self.view.classify(end) & sublime.CLASS_LINE_END:
 				break
-
-		if not found_enclosing:
-			# walk back to nearest terminator (treat backslash-escaped chars as part of the token)
-			while (
-				start > 0
-				and (
-					self.view.substr(start - 1) not in terminator
-					or (start >= 2 and self.view.substr(start - 2) == "\\")
-				)
-				and not (self.view.classify(start) & sublime.CLASS_LINE_START)
-			):
-				start -= 1
-
-			# walk forward; once past a deep-link ':' separator, bracketed contents
-			# ("..." or /.../) keep being included until the closing delim.
-			loc_delim: str | None = None
-			passed_sep = False
-			in_url = "://" in self.view.substr(sublime.Region(start, end))
-			while end < view_size:
-				if self.view.classify(end) & sublime.CLASS_LINE_END:
-					break
-				c = self.view.substr(end)
-				if loc_delim:
-					if c == loc_delim and not (end >= 1 and self.view.substr(end - 1) == "\\"):
-						end += 1
-						break
+			c = self.view.substr(end)
+			if loc_delim:
+				if c == loc_delim and not (end >= 1 and self.view.substr(end - 1) == "\\"):
 					end += 1
-					continue
-				if c == ":" and end + 2 < view_size and self.view.substr(end + 1) == "/" and self.view.substr(end + 2) == "/":
-					in_url = True
-				if not passed_sep and not in_url and c == ":" and end + 1 < view_size:
-					nxt = self.view.substr(end + 1)
-					if nxt.isdigit() or nxt == '"' or (
-						nxt == "/" and (end + 2 >= view_size or self.view.substr(end + 2) != "/")
-					):
-						passed_sep = True
-						end += 1
-						if end < view_size and self.view.substr(end) in ('/', '"'):
-							loc_delim = self.view.substr(end)
-							end += 1
-						continue
-				if c in terminator and not (end >= 1 and self.view.substr(end - 1) == "\\"):
 					break
 				end += 1
+				continue
+			if c == ":" and end + 2 < view_size and self.view.substr(end + 1) == "/" and self.view.substr(end + 2) == "/":
+				in_url = True
+			if (
+				not passed_sep
+				and not in_url
+				and c == ":"
+				and end + 1 < view_size
+				and _starts_loc_suffix(self.view.substr(end + 1), self.view.substr(end + 2))
+			):
+				passed_sep = True
+				end += 1
+				if end < view_size and self.view.substr(end) in ('/', '"'):
+					loc_delim = self.view.substr(end)
+					end += 1
+				continue
+			if is_term(end) and not (end >= 1 and self.view.substr(end - 1) == "\\"):
+				break
+			end += 1
 
 		return sublime.Region(start, end)
 
@@ -639,9 +742,8 @@ class OpenUrlCommand(sublime_plugin.TextCommand):
 		for token in re.split(r"\s+", rest):
 			if not token:
 				continue
-			# strip surrounding quotes/backticks
-			if len(token) >= 2 and token[0] in ('"', "'", "`") and token[-1] == token[0]:
-				token = token[1:-1]
+			# strip a surrounding delimiter pair
+			token = strip_enclosing_pair(token)
 			if token and self._is_resolvable(token):
 				return token
 		return None
@@ -1117,10 +1219,7 @@ def parse_file_location(url: str, line_number_only: bool = False) -> tuple[str, 
 			line_hint = int(raw_path[inner_sep + 1 :])
 			raw_path = raw_path[:inner_sep]
 
-	if (raw_path.startswith('"') and raw_path.endswith('"')) or (
-		raw_path.startswith("'") and raw_path.endswith("'")
-	):
-		raw_path = raw_path[1:-1]
+	raw_path = strip_enclosing_pair(raw_path)
 
 	if loc_token.isdigit():
 		return (raw_path, {"type": "line", "value": int(loc_token)})
@@ -1273,10 +1372,9 @@ def select_shortest_path_form(*candidates: str) -> str:
 	return min(candidates, key=lambda p: (path_hop_count(p), len(p)))
 
 
-# Chars that terminate a token in OpenUrlCommand.find_selection (minus the quote
-# chars, which it treats as enclosing pairs). If a pasted path contains any of
-# these it won't re-select as one token later, so we wrap it in a quote.
-_RESELECTION_BREAKERS = frozenset("\t <>,[]()")
+# Chars that terminate a token in OpenUrlCommand.find_selection. If a pasted path
+# contains any of these it won't re-select as one token later, so we wrap it in a quote.
+_RESELECTION_BREAKERS = TOKEN_TERMINATORS
 
 
 def wrap_for_reselection(text: str) -> str:
@@ -1329,10 +1427,7 @@ class PasteRelativePathCommand(sublime_plugin.TextCommand):
 		line_only = config.get("deep_link_line_number_only", False)
 		path_part, loc_suffix = split_path_and_loc_suffix(raw, line_number_only=line_only)
 
-		if (path_part.startswith('"') and path_part.endswith('"')) or (
-			path_part.startswith("'") and path_part.endswith("'")
-		):
-			path_part = path_part[1:-1]
+		path_part = strip_enclosing_pair(path_part)
 
 		expanded_path = os.path.expanduser(os.path.expandvars(path_part))
 

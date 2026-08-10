@@ -2,16 +2,21 @@
 """
 Unit tests for open_url.py that don't require a running Sublime Text instance.
 
-Run with:  python3 test_open_url.py
-	   or: python3 -m pytest test_open_url.py -v
+Run with:  python3 tests/test_open_url.py
+	   or: python3 -m pytest tests/test_open_url.py -v
 
-When Sublime Text loads this file it already has 'sublime' in sys.modules, and the
-entire test body is skipped so ST sees a no-op module.
+This lives in tests/ (not the package root) because Sublime Text loads every
+top-level .py in a package as a plugin, and logged 'reloading plugin
+open-url.test_open_url' on every change. There's no __init__.py here, so ST
+never imports it. The 'sublime' in sys.modules guard below is a second layer:
+were this file ever loaded by ST, the entire test body is skipped so ST sees a
+no-op module.
 """
 
 import os
 import re
 import sys
+import tempfile
 import types
 import unittest
 
@@ -105,7 +110,8 @@ if "sublime" not in sys.modules:
 
 	# ---- Load open_url and url as a package ----
 	# open_url.py uses `from .url import is_url`, so we need a package context.
-	_here = os.path.dirname(os.path.abspath(__file__))
+	# This file lives in tests/, so the plugin sources are one level up.
+	_here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 	_pkg_name = "open_url_pkg"
 	_pkg = types.ModuleType(_pkg_name)
 	_pkg.__path__ = [_here]
@@ -229,7 +235,7 @@ if "sublime" not in sys.modules:
 	try:
 		import yaml as _yaml
 
-		_cases_path = os.path.join(_here, "test_cases.yaml")
+		_cases_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "test_cases.yaml")
 		if os.path.exists(_cases_path):
 			with open(_cases_path) as _f:
 				_CASES = _yaml.safe_load(_f) or {}
@@ -706,6 +712,14 @@ if "sublime" not in sys.modules:
 			self.assertEqual(path, "file with spaces.py")
 			self.assertEqual(loc, {"type": "line", "value": 10})
 
+		def test_every_enclosing_pair_stripped_from_path(self):
+			"""Any enclosing pair (not just quotes) is stripped off the path part."""
+			for open_ch, close_ch in open_url.ENCLOSING_PAIRS:
+				with self.subTest(pair=open_ch + close_ch):
+					path, loc = parse_file_location(open_ch + "file with spaces.py" + close_ch + ":10")
+					self.assertEqual(path, "file with spaces.py")
+					self.assertEqual(loc, {"type": "line", "value": 10})
+
 		def test_malformed_returns_original(self):
 			"""Malformed returns original."""
 			path, loc = parse_file_location("file.py:xyz")
@@ -981,6 +995,59 @@ if "sublime" not in sys.modules:
 			"""Backtick quoted path."""
 			self.assertEqual(_expand("`file with spaces.txt`", 5), "file with spaces.txt")
 
+		# A path with spaces wrapped in any enclosing pair — quotes or brackets — must
+		# select whole from every cursor position inside it.
+		_SPACEY_PATH = "~/OneDrive-amazon.com/Q CST - QCST-ALL/Customers/3M/onboarding"
+
+		def test_every_enclosing_pair_grabs_spacey_path(self):
+			"""Each pair in ENCLOSING_PAIRS wraps a spaced path that selects whole."""
+			path = self._SPACEY_PATH
+			for open_ch, close_ch in open_url.ENCLOSING_PAIRS:
+				text = open_ch + path + close_ch
+				for col in range(1, len(text)):
+					with self.subTest(pair=open_ch + close_ch, col=col):
+						self.assertEqual(_expand(text, col), path)
+
+		def test_enclosing_pair_with_deep_link_suffix(self):
+			"""A ':N' suffix after the closing delim stays attached, brackets and all."""
+			for open_ch, close_ch in open_url.ENCLOSING_PAIRS:
+				text = open_ch + "file with spaces.py" + close_ch + ":42"
+				with self.subTest(pair=open_ch + close_ch):
+					self.assertEqual(_expand(text, 5), text)
+
+		def test_enclosing_pair_in_surrounding_prose(self):
+			"""The wrapped path is found with prose on both sides."""
+			path = self._SPACEY_PATH
+			for open_ch, close_ch in open_url.ENCLOSING_PAIRS:
+				text = "see " + open_ch + path + close_ch + " now"
+				with self.subTest(pair=open_ch + close_ch):
+					self.assertEqual(_expand(text, 4 + 1 + 30), path)
+
+		def test_dollar_brace_var_path_not_split_by_braces(self):
+			"""Regression guard: ${VAR}/path must stay whole, not expand to the brace pair."""
+			for col in (2, 4, 7, 10):
+				with self.subTest(col=col):
+					self.assertEqual(_expand("${HOME}/Desktop", col), "${HOME}/Desktop")
+
+		def test_dollar_brace_var_with_spacey_deep_link(self):
+			"""${VAR} paths still match the deep-link span matcher (braces aren't a pair)."""
+			for link in ("${HOME}/a.txt:/^foo bar/", '${HOME}/a.txt:3:"hello world"'):
+				for col in (5, 18, len(link) - 1):
+					with self.subTest(link=link, col=col):
+						self.assertEqual(_expand(link, col), link)
+
+		def test_dollar_brace_var_wrapped_in_pair(self):
+			"""A ${VAR} path inside an enclosing pair still selects the path alone."""
+			self.assertEqual(_expand("(${HOME}/my notes.txt)", 5), "${HOME}/my notes.txt")
+
+		def test_closed_pair_before_cursor_is_not_enclosing(self):
+			"""A markdown checkbox's '[ ]' must not pair with a later ']'."""
+			self.assertEqual(_expand("- [ ] task [note] here", 7), "task")
+
+		def test_unmatched_opener_falls_back_to_token_walk(self):
+			"""An opener with no closer on the line leaves the plain walk in charge."""
+			self.assertEqual(_expand("(notes.txt and more", 3), "notes.txt")
+
 		def test_does_not_cross_newline_forward(self):
 			"""Does not cross newline forward."""
 			text = "line one\nhttp://example.com\nline three"
@@ -1053,6 +1120,151 @@ if "sublime" not in sys.modules:
 		def test_url_not_treated_as_deep_link_token(self):
 			"""A web URL must not be captured by the deep-link span matcher."""
 			self.assertEqual(_expand("http://example.com", 5), "http://example.com")
+
+	class TestEnclosingPairEndToEnd(unittest.TestCase):
+		"""A real path with spaces, wrapped in each pair, resolves through run()."""
+
+		def setUp(self):
+			"""Create a temp tree whose folder and file names contain spaces."""
+			tmp = tempfile.TemporaryDirectory()
+			self.addCleanup(tmp.cleanup)
+			self.dir_path = os.path.join(tmp.name, "Q CST - ALL", "3M")
+			os.makedirs(self.dir_path)
+			self.file_path = os.path.join(self.dir_path, "notes with space.txt")
+			with open(self.file_path, "w") as f:
+				f.write("one\ntwo\n")
+
+		def _dispatch(self, text, cursor):
+			"""Run open_url over ``text`` and capture which action fired."""
+			view = MockView(text)
+			view._window = MockWindow(project_data=None)
+			cmd = OpenUrlCommand(view)
+			cmd.config = dict(_DEFAULT_SETTINGS)
+			got = {}
+			cmd.file_action = lambda p, m, u, location=None: got.update(kind="file", path=p, loc=location)
+			cmd.folder_action = lambda p, m, u: got.update(kind="folder", path=p)
+			cmd.other_action = lambda *a, **k: got.update(kind="other")
+			cmd.open_tab = lambda u: got.update(kind="web", path=u)
+			cmd.modify_or_search_action = lambda u: got.update(kind="search", path=u)
+			view.set_cursor(cursor)
+			cmd.run(None)
+			return got
+
+		def test_wrapped_folder_opens_as_folder(self):
+			"""Each pair around a spaced folder path dispatches folder_action."""
+			for open_ch, close_ch in open_url.ENCLOSING_PAIRS:
+				with self.subTest(pair=open_ch + close_ch):
+					got = self._dispatch(open_ch + self.dir_path + close_ch, 5)
+					self.assertEqual(got.get("kind"), "folder")
+					self.assertEqual(got.get("path"), self.dir_path)
+
+		def test_wrapped_file_opens_as_file(self):
+			"""Each pair around a spaced file path dispatches file_action."""
+			for open_ch, close_ch in open_url.ENCLOSING_PAIRS:
+				with self.subTest(pair=open_ch + close_ch):
+					got = self._dispatch(open_ch + self.file_path + close_ch, 5)
+					self.assertEqual(got.get("kind"), "file")
+					self.assertEqual(got.get("path"), self.file_path)
+
+		def test_wrapped_file_with_line_number_keeps_location(self):
+			"""A ':N' after the closing delim still resolves to a line location."""
+			for open_ch, close_ch in open_url.ENCLOSING_PAIRS:
+				with self.subTest(pair=open_ch + close_ch):
+					got = self._dispatch(open_ch + self.file_path + close_ch + ":2", 5)
+					self.assertEqual(got.get("kind"), "file")
+					self.assertEqual(got.get("path"), self.file_path)
+					self.assertEqual(got.get("loc"), {"type": "line", "value": 2})
+
+	class TestDelimiterConsistency(unittest.TestCase):
+		"""The hardcoded delimiter set and the ``delimiters`` setting must not drift."""
+
+		def test_every_pair_char_is_a_terminator(self):
+			"""Both halves of every enclosing pair terminate a bare token."""
+			for open_ch, close_ch in open_url.ENCLOSING_PAIRS:
+				self.assertIn(open_ch, open_url.TOKEN_TERMINATORS)
+				self.assertIn(close_ch, open_url.TOKEN_TERMINATORS)
+
+		def test_terminators_are_subset_of_delimiters_setting(self):
+			"""Anything find_selection breaks on must also be in the delimiters default."""
+			delimiters = set(_DEFAULT_SETTINGS["delimiters"])
+			self.assertEqual(open_url.TOKEN_TERMINATORS - delimiters, set())
+
+		def test_only_documented_chars_differ(self):
+			"""The delimiters setting adds exactly '\\n', '\\r', and '*' — see the comment."""
+			delimiters = set(_DEFAULT_SETTINGS["delimiters"])
+			self.assertEqual(delimiters - open_url.TOKEN_TERMINATORS, set("\n\r*"))
+
+		def test_reselection_breakers_match_terminators(self):
+			"""Wrapping-on-paste keys off the same set find_selection breaks on."""
+			self.assertEqual(open_url._RESELECTION_BREAKERS, open_url.TOKEN_TERMINATORS)
+
+		def test_var_brace_rule_shared_by_token_walk_and_regex(self):
+			"""One ${VAR} definition drives both the token walk and the deep-link regex.
+
+			These were once spelled separately ('[^{}]*' vs '[^{}\\s]*') and disagreed on
+			'${A B}', so the token walk skipped braces the regex treated as a real pair.
+			"""
+			self.assertIn(open_url._VAR_BRACE_SRC, open_url._DEEP_LINK_TOKEN_RE.pattern)
+			# a brace group with whitespace is a real pair, not an expansion — both agree
+			self.assertEqual(open_url._var_brace_indices("${A B}/x.txt"), frozenset())
+			self.assertEqual(open_url._var_brace_indices("${AB}/x.txt"), frozenset({1, 4}))
+
+	class TestStripEnclosingPair(unittest.TestCase):
+		def test_strips_each_pair(self):
+			"""Every pair is stripped when it wraps the whole string."""
+			for open_ch, close_ch in open_url.ENCLOSING_PAIRS:
+				with self.subTest(pair=open_ch + close_ch):
+					self.assertEqual(open_url.strip_enclosing_pair(open_ch + "a b" + close_ch), "a b")
+
+		def test_leaves_unwrapped_text(self):
+			"""Text with no enclosing pair is returned unchanged."""
+			for text in ("~/a/b.txt", "", "a", "(unclosed", "unopened)", "[a](b)"):
+				with self.subTest(text=text):
+					self.assertEqual(open_url.strip_enclosing_pair(text), text)
+
+		def test_leaves_mismatched_pair(self):
+			"""A mismatched open/close combination is not stripped."""
+			self.assertEqual(open_url.strip_enclosing_pair("(a b]"), "(a b]")
+
+		def test_strips_only_one_layer(self):
+			"""Nested wrapping strips a single layer per call."""
+			self.assertEqual(open_url.strip_enclosing_pair('("a b")'), '"a b"')
+
+	class TestFindEnclosingSpan(unittest.TestCase):
+		"""Unit-level coverage for the enclosing-pair span matcher (pure string logic)."""
+
+		def test_each_pair_spans_inner_text(self):
+			"""Every pair returns the span inside the delimiters."""
+			for open_ch, close_ch in open_url.ENCLOSING_PAIRS:
+				line = open_ch + "a b c" + close_ch
+				with self.subTest(pair=open_ch + close_ch):
+					self.assertEqual(open_url.find_enclosing_span(line, 3), (1, 6))
+
+		def test_none_when_not_inside_a_pair(self):
+			"""Unwrapped prose yields no span."""
+			self.assertIsNone(open_url.find_enclosing_span("plain text here", 5))
+
+		def test_none_for_unmatched_opener(self):
+			"""An opener with no closer isn't a pair."""
+			self.assertIsNone(open_url.find_enclosing_span("(notes.txt more", 3))
+
+		def test_none_for_pair_closed_before_cursor(self):
+			"""A '[ ]' that closes before the cursor must not act as an opener."""
+			self.assertIsNone(open_url.find_enclosing_span("- [ ] task here", 8))
+
+		def test_innermost_pair_wins(self):
+			"""With nested pairs the shortest span is returned."""
+			line = 'x ("a b") y'
+			self.assertEqual(open_url.find_enclosing_span(line, 6), (4, 7))
+
+		def test_deep_link_suffix_keeps_wrapper(self):
+			"""A ':N' after the closing delim extends the span and keeps the wrapper."""
+			line = "[my file.py]:42"
+			self.assertEqual(open_url.find_enclosing_span(line, 5), (0, len(line)))
+
+		def test_var_brace_is_not_a_pair(self):
+			"""${VAR} braces never form an enclosing pair."""
+			self.assertIsNone(open_url.find_enclosing_span("${HOME}/Desktop", 4))
 
 	class TestFindDeepLinkSpan(unittest.TestCase):
 		"""Unit-level coverage for the deep-link token span matcher."""
