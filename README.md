@@ -96,6 +96,8 @@ This opens files for editing, or reveals folders, without showing the action men
 
 Prompts for a path or URL, then runs Open URL on whatever you type. Handy when nothing's selected and you want to navigate by name.
 
+The panel is prefilled (and preselected, so typing replaces it) with the clipboard when the clipboard looks like a path or URL — anything that resolves on disk, including a deep link like `~/txt/notes.md:85` or a path with spaces, plus single tokens that merely look path-ish (`~/…`, `./…`, `/…`, `C:\…`, `://`, a bare domain) so you can edit a path that doesn't exist yet. A `file://` URI is converted to a plain path, and a surrounding quote/bracket pair is stripped. Prose, multi-line, and oversized clipboards leave the panel empty.
+
 ## Deep Links
 
 Open URL recognizes "deep link" suffixes attached to a path with a colon, so you can jump to a specific spot inside a file. All forms work both ways: **Open URL** navigates to them, and **Open URL: Copy Deep Link** generates them for the cursor or selection.

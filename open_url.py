@@ -233,6 +233,25 @@ def prepend_scheme(s: str) -> str:
 	return s
 
 
+# a token is "path-ish" if it has a URL scheme, or is home-relative (~/x, ~user/x),
+# relative (./x, ../x), rooted (/x, \\server\x), or a windows drive path (C:/x)
+_PATHISH_RE = re.compile(r"^(?:~[^/\\]*[/\\]|\.{1,2}[/\\]|[/\\]|[A-Za-z]:[/\\])|://")
+
+# clipboard larger than this is never a path, so don't bother pulling it in
+CLIPBOARD_PREFILL_MAX = 4096
+
+
+def looks_like_path(text: str) -> bool:
+	"""True if ``text`` is plausibly a path or URL, even if it doesn't exist on disk.
+
+	Used to decide whether clipboard contents are worth prefilling into the input panel.
+	"""
+	text = text.strip()
+	if not text or len(text.split()) > 1:
+		return False
+	return bool(_PATHISH_RE.search(text)) or is_url(text)
+
+
 def remove_trailing_delimiters(url: str, trailing_delimiters: str) -> str:
 	"""
 	Removes any and all chars in trailing_delimiters from end of url.
@@ -499,7 +518,7 @@ class OpenUrlCommand(sublime_plugin.TextCommand):
 				"""Continuation invoked once the user has finished typing in the input panel."""
 				self.handle(input_url, show_menu)
 
-			self.view.window().show_input_panel("Path:", "", on_done, None, None)
+			self.view.window().show_input_panel("Path:", self.clipboard_prefill(), on_done, None, None)
 			return
 
 		# Sublime Text has its own open_url command used for things like Help > Documentation
@@ -732,6 +751,22 @@ class OpenUrlCommand(sublime_plugin.TextCommand):
 		except (TypeError, AttributeError):
 			pass
 		return False
+
+	def clipboard_prefill(self) -> str:
+		"""Clipboard text to prefill the "Use Input" panel, or "" if it isn't a path or URL.
+
+		Accepts anything that resolves on disk (including a ``path:42`` deep link, and
+		paths containing spaces), plus single tokens that merely look path-ish so a
+		not-yet-created path can still be edited. Prose, multi-line, and oversized
+		clipboards open the panel empty.
+		"""
+		raw = (sublime.get_clipboard(CLIPBOARD_PREFILL_MAX) or "").strip()
+		if not raw or "\n" in raw:
+			return ""
+		raw = strip_enclosing_pair(raw)
+		if raw.lower().startswith("file://"):
+			raw = strip_file_scheme(raw)
+		return raw if self._is_resolvable(raw) or looks_like_path(raw) else ""
 
 	def _scan_line_for_url(self, pos: int) -> str | None:
 		"""Scan rightward from pos to end of line, return first resolvable token."""

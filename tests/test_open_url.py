@@ -87,7 +87,7 @@ if "sublime" not in sys.modules:
 	_mock_sublime.Region = _MockRegion
 	_mock_sublime.load_settings = lambda name: _MockSettings(_DEFAULT_SETTINGS.copy())
 	_mock_sublime.set_clipboard = lambda x: None
-	_mock_sublime.get_clipboard = lambda: ""
+	_mock_sublime.get_clipboard = lambda size_limit=None: ""
 	_mock_sublime.status_message = lambda x: None
 	_mock_sublime.error_message = lambda x: None
 	_mock_sublime.active_window = lambda: None
@@ -843,6 +843,109 @@ if "sublime" not in sys.modules:
 		def test_file_uri_nonexistent(self):
 			"""File uri nonexistent."""
 			self.assertFalse(self.cmd._is_resolvable("file:///nonexistent/path/x.zzznottld"))
+
+	class TestClipboardPrefill(unittest.TestCase):
+		def _prefill(self, clip):
+			"""clipboard_prefill() with the clipboard set to ``clip``."""
+			view = MockView("")
+			view._window = MockWindow(project_data=None)
+			cmd = OpenUrlCommand(view)
+			cmd.config = dict(_DEFAULT_SETTINGS)
+			orig = _mock_sublime.get_clipboard
+			_mock_sublime.get_clipboard = lambda size_limit=None: clip
+			try:
+				return cmd.clipboard_prefill()
+			finally:
+				_mock_sublime.get_clipboard = orig
+
+		def test_url(self):
+			"""Url."""
+			self.assertEqual(self._prefill("https://example.com/path"), "https://example.com/path")
+
+		def test_bare_domain(self):
+			"""Bare domain."""
+			self.assertEqual(self._prefill("google.com"), "google.com")
+
+		def test_home_relative_path(self):
+			"""Home relative path."""
+			self.assertEqual(self._prefill("~/txt/aws/notes.md"), "~/txt/aws/notes.md")
+
+		def test_home_relative_path_with_deep_link(self):
+			"""Home relative path with deep link."""
+			self.assertEqual(self._prefill("~/txt/aws/notes.md:85"), "~/txt/aws/notes.md:85")
+
+		def test_existing_file_with_deep_link(self):
+			"""Existing file with deep link."""
+			clip = os.path.abspath(__file__) + ":85"
+			self.assertEqual(self._prefill(clip), clip)
+
+		def test_relative_path(self):
+			"""Relative path."""
+			self.assertEqual(self._prefill("./src/app.js"), "./src/app.js")
+
+		def test_absolute_nonexistent_path(self):
+			"""Absolute nonexistent path."""
+			self.assertEqual(self._prefill("/tmp/not/yet/here.txt"), "/tmp/not/yet/here.txt")
+
+		def test_windows_drive_path(self):
+			"""Windows drive path."""
+			self.assertEqual(self._prefill(r"C:\Users\me\notes.txt"), r"C:\Users\me\notes.txt")
+
+		def test_whitespace_stripped(self):
+			"""Whitespace stripped."""
+			self.assertEqual(self._prefill("  ~/txt/notes.md \n"), "~/txt/notes.md")
+
+		def test_enclosing_pair_stripped(self):
+			"""Enclosing pair stripped."""
+			self.assertEqual(self._prefill('"~/my docs/notes.md"'), "~/my docs/notes.md")
+
+		def test_file_uri(self):
+			"""File uri."""
+			path = os.path.abspath(__file__)
+			self.assertEqual(self._prefill("file://" + path), path)
+
+		def test_existing_path_with_spaces(self):
+			"""Existing path with spaces."""
+			with tempfile.TemporaryDirectory() as d:
+				path = os.path.join(d, "my notes.txt")
+				with open(path, "w") as f:
+					f.write("x")
+				self.assertEqual(self._prefill(path), path)
+
+		def test_prose_ignored(self):
+			"""Prose ignored."""
+			self.assertEqual(self._prefill("some copied sentence of text"), "")
+
+		def test_plain_word_ignored(self):
+			"""Plain word ignored."""
+			self.assertEqual(self._prefill("hello"), "")
+
+		def test_bare_filename_ignored(self):
+			"""Bare filename ignored."""
+			self.assertEqual(self._prefill("notes.zzznottld"), "")
+
+		def test_multiline_ignored(self):
+			"""Multiline ignored."""
+			self.assertEqual(self._prefill("~/a/b.md\n~/c/d.md"), "")
+
+		def test_empty_clipboard(self):
+			"""Empty clipboard."""
+			self.assertEqual(self._prefill(""), "")
+
+		def test_none_clipboard(self):
+			"""None clipboard."""
+			self.assertEqual(self._prefill(None), "")
+
+	class TestLooksLikePath(unittest.TestCase):
+		def test_pathish_forms(self):
+			"""Pathish forms."""
+			for text in ["~/a/b", "~user/a", "./a", "../a", "/a/b", r"C:\a", "s3://bucket/key", "coad.net/noah"]:
+				self.assertTrue(open_url.looks_like_path(text), text)
+
+		def test_non_pathish_forms(self):
+			"""Non pathish forms."""
+			for text in ["", "   ", "hello", "notes.zzznottld", "a sentence with ~/a/b in it", "~notilde"]:
+				self.assertFalse(open_url.looks_like_path(text), text)
 
 	class TestScanLineForUrl(unittest.TestCase):
 		def _scan(self, text, col=0):
