@@ -345,6 +345,42 @@ def find_loc_sep(text: str, line_number_only: bool = False) -> int:
 	return -1
 
 
+# Inline markdown link ``[label](inner)``. Parens nest one level deep, so a wiki URL
+# like ``Rust_(language)`` stays whole. The target is carved out of ``inner`` below
+# rather than in the pattern, since it may hold spaces (a path) or a ``"title"`` suffix.
+_MD_LINK_RE = re.compile(r"\[[^\[\]]*\]\((?P<inner>[^()]*(?:\([^()]*\)[^()]*)*)\)")
+
+# optional ``"title"`` after a markdown link target: ``[a](url "the title")``
+_MD_TITLE_RE = re.compile(r"\s+\"[^\"]*\"\s*$")
+
+
+def find_markdown_link_span(line: str, col: int) -> tuple[int, int] | None:
+	"""Span of the *target* of an inline markdown link in ``line`` containing ``col``.
+
+	Lets the cursor sit anywhere in ``[label](target)`` — on the brackets, inside the
+	label, or in the target — and still resolve the target. Without this the
+	enclosing-pair scan would grab the label text and treat it as a search term.
+	A ``"title"``, surrounding whitespace, and an angle wrapper (``<my file.txt>``)
+	are all trimmed off. Returns None when the link has no target (``[a]()``).
+	"""
+	for match in _MD_LINK_RE.finditer(line):
+		if not match.start() <= col <= match.end():
+			continue
+		inner = match.group("inner")
+		title = _MD_TITLE_RE.search(inner)
+		if title:
+			inner = inner[: title.start()]
+		target = inner.strip()
+		if not target:
+			return None
+		start = match.start("inner") + len(inner) - len(inner.lstrip())
+		end = start + len(target)
+		if len(target) > 2 and target[0] == "<" and target[-1] == ">":
+			return (start + 1, end - 1)
+		return (start, end)
+	return None
+
+
 def find_deep_link_span(line: str, col: int) -> tuple[int, int] | None:
 	"""Find a bracketed deep-link token in ``line`` whose span contains ``col``.
 
@@ -660,7 +696,11 @@ class OpenUrlCommand(sublime_plugin.TextCommand):
 		line_text = self.view.substr(line_region)
 		line_begin = line_region.begin()
 		col = start - line_begin
-		span = find_deep_link_span(line_text, col)
+		# An inline markdown link resolves to its target from anywhere inside it,
+		# label and brackets included, so check it before the generic scans.
+		span = find_markdown_link_span(line_text, col)
+		if span is None:
+			span = find_deep_link_span(line_text, col)
 		if span is not None:
 			return sublime.Region(line_begin + span[0], line_begin + span[1])
 

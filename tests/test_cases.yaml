@@ -55,6 +55,29 @@ selection_cases:
   # markdown link targets
   - {label: md-link-url,       text: "- [label](http://example.com) x", cursor: 20, expected: "http://example.com"}
   - {label: md-link-path,      text: "see [docs](~/txt/notes.txt) here", cursor: 15, expected: "~/txt/notes.txt"}
+  # cursor anywhere in the link — bracket, label, or target — resolves the target
+  - {label: md-link-on-open-bracket, text: "[bits - OneDrive](https://a.sharepoint.com/x?id=%2Fa%20b&v=1)", cursor: 0,
+     expected: "https://a.sharepoint.com/x?id=%2Fa%20b&v=1"}
+  - {label: md-link-label-start, text: "[bits - OneDrive](https://a.sharepoint.com/x?id=%2Fa%20b&v=1)", cursor: 1,
+     expected: "https://a.sharepoint.com/x?id=%2Fa%20b&v=1"}
+  - {label: md-link-label-space, text: "[bits - OneDrive](https://a.sharepoint.com/x?id=%2Fa%20b&v=1)", cursor: 6,
+     expected: "https://a.sharepoint.com/x?id=%2Fa%20b&v=1"}
+  - {label: md-link-close-bracket, text: "[bits - OneDrive](https://a.sharepoint.com/x?id=%2Fa%20b&v=1)", cursor: 16,
+     expected: "https://a.sharepoint.com/x?id=%2Fa%20b&v=1"}
+  - {label: md-link-open-paren, text: "[bits - OneDrive](https://a.sharepoint.com/x?id=%2Fa%20b&v=1)", cursor: 17,
+     expected: "https://a.sharepoint.com/x?id=%2Fa%20b&v=1"}
+  - {label: md-link-target-start, text: "[bits - OneDrive](https://a.sharepoint.com/x?id=%2Fa%20b&v=1)", cursor: 18,
+     expected: "https://a.sharepoint.com/x?id=%2Fa%20b&v=1"}
+  - {label: md-link-in-prose,   text: "read [my notes](~/txt/a b.txt) later", cursor: 8, expected: "~/txt/a b.txt"}
+  - {label: md-link-angle-target, text: "see [docs](<~/txt/a b.txt>) here", cursor: 6, expected: "~/txt/a b.txt"}
+  - {label: md-link-with-title, text: '[docs](~/txt/notes.txt "my title")', cursor: 3, expected: "~/txt/notes.txt"}
+  - {label: md-link-nested-parens, text: "[wiki](https://en.wikipedia.org/wiki/Rust_(language)) x", cursor: 3,
+     expected: "https://en.wikipedia.org/wiki/Rust_(language)"}
+  - {label: md-link-deep-link-target, text: "[foo](~/txt/f.py:12:/^def foo/) x", cursor: 2,
+     expected: "~/txt/f.py:12:/^def foo/"}
+  - {label: md-link-second-of-two, text: "[a](one.txt) and [b](two.txt)", cursor: 19, expected: "two.txt"}
+  - {label: md-link-outside-after, text: "[a](one.txt) and google.com", cursor: 20, expected: "google.com"}
+  - {label: md-link-empty-target, text: "[a]() and google.com", cursor: 1, expected: "a"}
   # a pair that opens and closes before the cursor is not an enclosing pair
   - {label: md-checkbox,       text: "- [ ] visit google.com now", cursor: 15, expected: "google.com"}
   - {label: unmatched-opener,  text: "(notes.txt and more", cursor: 3,  expected: "notes.txt"}

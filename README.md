@@ -56,6 +56,26 @@ Details:
 - `${VAR}` braces are part of the path, never a delimiter pair — `${HOME}/Desktop` selects whole.
 - Backslash-escaped spaces (`~/a\ b.txt`) also work, unwrapped.
 
+### Markdown links
+
+The cursor can sit **anywhere** inside an inline markdown link — on either bracket, inside the label, on the paren, or in the target — and Open URL resolves the *target*:
+
+```
+[bits - OneDrive](https://amazon-my.sharepoint.com/shared?id=%2Fsites%2FQCST)
+[my notes](~/txt/Q CST - ALL/notes.txt)
+[docs](<~/txt/a b.txt>)
+[wiki](https://en.wikipedia.org/wiki/Rust_(programming_language))
+[foo](~/txt/f.py:12:/^def foo/)
+```
+
+Details:
+
+- Targets may contain spaces, with or without an angle wrapper — the whole target is taken.
+- A `"title"` after the target is dropped, as are surrounding whitespace and the `<...>` wrapper.
+- Parens nest one level, so `Rust_(programming_language)` survives; a deep-link suffix in the target still works.
+- A link with an empty target (`[a]()`) falls back to normal expansion, so the label is what resolves.
+- Reference-style links (`[a][b]`) aren't followed — only inline `[label](target)`.
+
 ### Resolution order
 
 After expanding the selection (using `delimiters`), Open URL tries the following in order. The first match wins.
