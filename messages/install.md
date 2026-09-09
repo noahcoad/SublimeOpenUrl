@@ -10,8 +10,8 @@ Look for **Open URL** using the [Package Manager](http://wbond.net/sublime_packa
 
 ## How to use
 
-See here: https://github.com/noahcoad/open-url
+See here: https://github.com/noahcoad/SublimeOpenUrl
 
 ## Release Notes
 
-See here: https://github.com/noahcoad/open-url/tree/master/messages
+See here: https://github.com/noahcoad/SublimeOpenUrl/tree/master/messages

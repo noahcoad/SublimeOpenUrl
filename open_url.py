@@ -24,7 +24,7 @@ Sentinel command names (used in ``commands`` strings inside ``*_custom_commands`
 	edit_in_sublime, open_in_new_window, system_open, add_to_project, run_in_terminal
 These dispatch in-process via ``_run_builtin`` rather than spawning a subprocess.
 
-Repository: https://github.com/noahcoad/open-url
+Repository: https://github.com/noahcoad/SublimeOpenUrl
 """
 
 from __future__ import annotations

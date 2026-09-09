@@ -436,7 +436,7 @@ Add `"open_url.disable_default_key_bindings": true` to your User `Preferences.su
 
 ## Release notes
 
-[See version history.](https://github.com/noahcoad/open-url/tree/master/messages)
+[See version history.](https://github.com/noahcoad/SublimeOpenUrl/tree/master/messages)
 
 ## Development
 
