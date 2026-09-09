@@ -1,0 +1,48 @@
+// Windows. Kept in sync with "Default (Linux).sublime-keymap" -- same bindings, but they can't
+// share one Default.sublime-keymap: ST loads that on EVERY platform, including macOS, which leaked
+// these onto Mac alongside "Default (OSX).sublime-keymap". Split in 3.1.2.
+[
+  {
+    "keys": ["ctrl+alt+u"],
+    "command": "open_url",
+    "context": [
+      { "key": "setting.open_url.disable_default_key_bindings", "operator": "not_equal", "operand": true }
+    ]
+  },
+  {
+    "keys": ["ctrl+alt+shift+u"],
+    "command": "select_url",
+    "context": [
+      { "key": "setting.open_url.disable_default_key_bindings", "operator": "not_equal", "operand": true }
+    ]
+  },
+  {
+    "keys": ["ctrl+alt+shift+d"],
+    "command": "copy_deep_link",
+    "context": [
+      { "key": "setting.open_url.disable_default_key_bindings", "operator": "not_equal", "operand": true }
+    ]
+  },
+  {
+    "keys": ["ctrl+alt+v"],
+    "command": "paste_relative_path",
+    "context": [
+      { "key": "setting.open_url.disable_default_key_bindings", "operator": "not_equal", "operand": true }
+    ]
+  },
+  {
+    // ctrl+alt+o is taken by SFTP and OmniMarkupPreviewer on these platforms
+    "keys": ["ctrl+alt+shift+o"],
+    "command": "system_open_this_file",
+    "context": [
+      { "key": "setting.open_url.disable_default_key_bindings", "operator": "not_equal", "operand": true }
+    ]
+  },
+  {
+    "keys": ["ctrl+alt+shift+c"],
+    "command": "copy_transformed_path",
+    "context": [
+      { "key": "setting.open_url.disable_default_key_bindings", "operator": "not_equal", "operand": true }
+    ]
+  }
+]

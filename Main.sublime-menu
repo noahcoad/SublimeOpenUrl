@@ -17,6 +17,7 @@
                 "args":
                 {
                   "base_file": "${packages}/Open URL/open_url.sublime-settings",
+                  "user_file": "${packages}/User/open_url.sublime-settings",
                   "default": "// settings in here override those in \"Open URL/open_url.sublime-settings\",\n\n{\n\t$0\n}\n"
                 }
               },
@@ -25,7 +26,8 @@
                 "command": "edit_settings",
                 "args":
                 {
-                  "base_file": "${packages}/Open URL/Default ($platform).sublime-keymap",
+                  "base_file": "${packages}/Open URL/Default (${platform}).sublime-keymap",
+                  "user_file": "${packages}/User/Default (${platform}).sublime-keymap",
                   "default": "[\n\t$0\n]\n"
                 }
               }

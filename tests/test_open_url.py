@@ -108,19 +108,25 @@ if "sublime" not in sys.modules:
 	sys.modules["sublime"] = _mock_sublime
 	sys.modules["sublime_plugin"] = _mock_sublime_plugin
 
-	# ---- Load open_url and url as a package ----
-	# open_url.py uses `from .url import is_url`, so we need a package context.
-	# This file lives in tests/, so the plugin sources are one level up.
+	# ---- Load open_url and lib.url as a package ----
+	# open_url.py uses `from .lib.url import is_url`, so we need a package context, and `lib` has to
+	# exist as a subpackage of it. This file lives in tests/, so the plugin sources are one level up.
 	_here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 	_pkg_name = "open_url_pkg"
 	_pkg = types.ModuleType(_pkg_name)
 	_pkg.__path__ = [_here]
 	sys.modules[_pkg_name] = _pkg
 
-	_url_spec = importlib.util.spec_from_file_location(f"{_pkg_name}.url", os.path.join(_here, "url.py"))
+	_lib = types.ModuleType(f"{_pkg_name}.lib")
+	_lib.__path__ = [os.path.join(_here, "lib")]
+	sys.modules[f"{_pkg_name}.lib"] = _lib
+	_pkg.lib = _lib
+
+	_url_spec = importlib.util.spec_from_file_location(f"{_pkg_name}.lib.url", os.path.join(_here, "lib", "url.py"))
 	_url_mod = importlib.util.module_from_spec(_url_spec)
-	sys.modules[f"{_pkg_name}.url"] = _url_mod
+	sys.modules[f"{_pkg_name}.lib.url"] = _url_mod
 	_url_spec.loader.exec_module(_url_mod)
+	_lib.url = _url_mod
 
 	_ou_spec = importlib.util.spec_from_file_location(f"{_pkg_name}.open_url", os.path.join(_here, "open_url.py"))
 	open_url = importlib.util.module_from_spec(_ou_spec)

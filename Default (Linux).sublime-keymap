@@ -1,4 +1,6 @@
-// Linux and Windows
+// Linux. Kept in sync with "Default (Windows).sublime-keymap" -- same bindings, but they can't
+// share one Default.sublime-keymap: ST loads that on EVERY platform, including macOS, which leaked
+// these onto Mac alongside "Default (OSX).sublime-keymap". Split in 3.1.2.
 [
   {
     "keys": ["ctrl+alt+u"],

@@ -4,6 +4,11 @@
     "count": 2,
     "modifiers": ["alt"],
     "press_command": "drag_select",
-    "command": "open_url"
+    "command": "open_url",
+    // Same guard as the keymaps -- without it, disable_default_key_bindings left this one live and
+    // the README's "all bindings become inactive" was a lie. Mousemaps honor context. 3.1.2
+    "context": [
+      { "key": "setting.open_url.disable_default_key_bindings", "operator": "not_equal", "operand": true }
+    ]
   }
 ]

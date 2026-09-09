@@ -432,7 +432,7 @@ Project settings completely replace user settings for the keys they specify (no 
 
 ### Disable default key bindings
 
-Add `"open_url.disable_default_key_bindings": true` to your User `Preferences.sublime-settings`. All five Open URL bindings will become inactive; rebind them yourself in your User `Default.sublime-keymap` if you like.
+Add `"open_url.disable_default_key_bindings": true` to your User `Preferences.sublime-settings`. All six Open URL key bindings and the <kbd>alt</kbd>+double-click mouse binding become inactive; rebind them yourself in your User `Default.sublime-keymap` if you like.
 
 ## Release notes
 
