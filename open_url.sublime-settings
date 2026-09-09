@@ -84,6 +84,11 @@
 
   // extensions appended to the basename when resolving a bare name.
   // e.g. with [".js", ".ts"], typing "users" finds "users.js" or "users.ts".
+  // heads up: each suffix multiplies the resolve attempts (aliases x search_paths
+  // x file_prefixes x file_suffixes), so a long list can add noticeable delay
+  // before a non-path falls through to a web search -- ".js" alone has been
+  // measured at seconds on a partial URL like //example.com/ (#68). Keep the list
+  // to the extensions your projects actually use, or set it to [] to skip the step.
   // example:
   // "file_suffixes": [".js", ".ts", ".tsx"]
   "file_suffixes": [".js"],

@@ -402,6 +402,41 @@ def find_markdown_link_span(line: str, col: int) -> tuple[int, int] | None:
 	return None
 
 
+# A scheme URL, matched as a unit so a comma inside a query string doesn't end it.
+# Body stops at whitespace and at the quote/angle/square/curly delimiters, so a
+# wrapped URL still comes out bare; parens are allowed but balanced below, since
+# they appear both inside URLs (wiki articles) and as a wrapper around them.
+_SCHEME_URL_RE = re.compile(r"[a-zA-Z][a-zA-Z0-9+.\-]*://[^\s<>\"'`\[\]{}]+")
+
+# Sentence punctuation that follows a URL far more often than it ends one.
+_URL_TRAILING_TRIM = ".,;:!?"
+
+
+def find_scheme_url_span(line: str, col: int) -> tuple[int, int] | None:
+	"""Span of the ``scheme://`` URL in ``line`` containing ``col``, else None.
+
+	Exists because ``,`` is a token terminator — it separates comma-joined path
+	lists — yet is perfectly legal in a query string, so ``?q=one,two`` used to
+	open ``?q=one`` (issue #61). Matching the URL as a unit fixes that from any
+	cursor position in it, where a terminator-based walk can only look one way.
+	"""
+	for match in _SCHEME_URL_RE.finditer(line):
+		start, end = match.span()
+		text = match.group(0)
+		# drop trailing sentence punctuation, then any ')' with no '(' to pair with
+		while text:
+			if text[-1] in _URL_TRAILING_TRIM:
+				text = text[:-1]
+			elif text[-1] == ")" and text.count(")") > text.count("("):
+				text = text[:-1]
+			else:
+				break
+		end = start + len(text)
+		if start <= col <= end:
+			return (start, end)
+	return None
+
+
 def find_deep_link_span(line: str, col: int) -> tuple[int, int] | None:
 	"""Find a bracketed deep-link token in ``line`` whose span contains ``col``.
 
@@ -799,6 +834,8 @@ class OpenUrlCommand(sublime_plugin.TextCommand):
 		span = find_markdown_link_span(line_text, col)
 		if span is None:
 			span = find_deep_link_span(line_text, col)
+		if span is None:
+			span = find_scheme_url_span(line_text, col)
 		if span is not None:
 			return sublime.Region(line_begin + span[0], line_begin + span[1])
 
@@ -1218,11 +1255,17 @@ class OpenUrlCommand(sublime_plugin.TextCommand):
 		window.set_project_data(data)
 
 	def run_subprocess(self, args, kwargs):
-		"""Run ``args`` in a background thread via ``subprocess.check_call`` to avoid blocking the UI."""
+		"""Run ``args`` in a background thread so the UI doesn't block.
+
+		The exit code is deliberately ignored: Windows ``explorer`` returns 1 even
+		when it opened the folder fine, and under ``check_call`` that raised inside
+		the worker thread, so every reveal printed a traceback to the console
+		(issue #75). The child's own stderr still reaches the console.
+		"""
 
 		def sp(args, kwargs):
 			"""Worker target that invokes the subprocess."""
-			subprocess.check_call(args, **kwargs)
+			subprocess.call(args, **kwargs)
 
 		threading.Thread(target=sp, args=(args, kwargs)).start()
 

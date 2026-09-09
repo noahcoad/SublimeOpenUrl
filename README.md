@@ -88,6 +88,23 @@ Details:
 - A link with an empty target (`[a]()`) falls back to normal expansion, so the label is what resolves.
 - Reference-style links (`[a][b]`) aren't followed — only inline `[label](target)`.
 
+### URLs with a scheme
+
+A `scheme://...` URL is matched as one unit from any cursor position inside it, so a **comma in a query string no longer truncates it**:
+
+```
+https://www.google.com/search?q=one,two
+```
+
+(A comma is otherwise a delimiter, which is what splits `notes.txt,other.txt` into two paths — that still works.)
+
+Details:
+
+- Trailing sentence punctuation (`.,;:!?`) is trimmed, so `see https://example.com.` opens without the period.
+- Parens are kept when balanced (`Foo_(bar)`) and dropped when they're a wrapper (`(https://example.com)`).
+- A quote, angle, square, or curly wrapper is never part of the URL.
+- Two URLs on one line are separate spans; the one under the cursor wins.
+
 ### Resolution order
 
 After expanding the selection (using `delimiters`), Open URL tries the following in order. The first match wins.

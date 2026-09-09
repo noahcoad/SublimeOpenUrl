@@ -1018,6 +1018,35 @@ if "sublime" not in sys.modules:
 			"""Http url from start."""
 			self.assertEqual(_expand("http://example.com", 0), "http://example.com")
 
+		def test_url_query_string_keeps_commas(self):
+			"""A comma is a legal query-string char, so it must not truncate a URL (#61)."""
+			url = "https://www.google.com/search?q=one,two"
+			for col in (0, 10, 30, len(url)):
+				with self.subTest(col=col):
+					self.assertEqual(_expand(url, col), url)
+
+		def test_comma_still_separates_non_urls(self):
+			"""The comma exemption is URL-only — a comma-separated path list still splits."""
+			self.assertEqual(_expand("notes.txt,other.txt", 2), "notes.txt")
+
+		def test_url_drops_trailing_sentence_punctuation(self):
+			"""Punctuation that ends the sentence, not the URL, is trimmed."""
+			for text in ("see https://example.com.", "https://example.com, and more"):
+				with self.subTest(text=text):
+					self.assertEqual(_expand(text, 10), "https://example.com")
+
+		def test_url_keeps_balanced_parens_but_not_a_wrapper(self):
+			"""A '(' inside the URL is kept; a paren wrapping it is not."""
+			wiki = "https://en.wikipedia.org/wiki/Foo_(bar)"
+			self.assertEqual(_expand(wiki, 35), wiki)
+			self.assertEqual(_expand("(https://example.com/x)", 5), "https://example.com/x")
+
+		def test_two_urls_on_one_line_pick_the_one_under_the_cursor(self):
+			"""Each URL is its own span, commas included."""
+			line = "https://a.com/1,2 https://b.com/3,4"
+			self.assertEqual(_expand(line, 5), "https://a.com/1,2")
+			self.assertEqual(_expand(line, 25), "https://b.com/3,4")
+
 		def test_https_url(self):
 			"""Https url."""
 			self.assertEqual(_expand("https://example.com", 5), "https://example.com")
