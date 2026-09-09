@@ -1140,8 +1140,13 @@ if "sublime" not in sys.modules:
 						self.assertEqual(_expand(link, col), link)
 
 		def test_dollar_brace_var_wrapped_in_pair(self):
-			"""A ${VAR} path inside an enclosing pair still selects the path alone."""
-			self.assertEqual(_expand("(${HOME}/my notes.txt)", 5), "${HOME}/my notes.txt")
+			"""A ${VAR} path inside an enclosing pair still selects the path alone.
+
+			The dir must not exist on any machine: once the wrapped text resolves, or
+			the bare token under the cursor does, the prose-annotation fallback takes
+			over and this stops testing the brace-isn't-a-pair rule.
+			"""
+			self.assertEqual(_expand("(${HOME}/zzznodir/my notes.txt)", 5), "${HOME}/zzznodir/my notes.txt")
 
 		def test_closed_pair_before_cursor_is_not_enclosing(self):
 			"""A markdown checkbox's '[ ]' must not pair with a later ']'."""
@@ -1277,6 +1282,106 @@ if "sublime" not in sys.modules:
 					self.assertEqual(got.get("kind"), "file")
 					self.assertEqual(got.get("path"), self.file_path)
 					self.assertEqual(got.get("loc"), {"type": "line", "value": 2})
+
+	class TestAnnotatedWrappedPath(unittest.TestCase):
+		"""Quotes wrapping a path *and* prose: the path under the cursor wins.
+
+		A note line like ``- "~/txt/notes.txt — reference for this prompt"`` puts the
+		cursor inside an enclosing pair whose full contents resolve to nothing. When
+		that happens the wrapper is ignored and the bare token under the cursor is
+		used instead — but only when that token really resolves, so a genuine spaced
+		path stays selected whole.
+		"""
+
+		def setUp(self):
+			"""Create a temp file (no spaces) plus a spaced one for the negative case."""
+			tmp = tempfile.TemporaryDirectory()
+			self.addCleanup(tmp.cleanup)
+			self.dir = tmp.name
+			self.file_path = os.path.join(self.dir, "prj_wbr_weekly_customer_project_status.txt")
+			with open(self.file_path, "w") as f:
+				f.write("one\ntwo\nthree\n")
+			self.spacey_path = os.path.join(self.dir, "notes with space.txt")
+			with open(self.spacey_path, "w") as f:
+				f.write("x\n")
+
+		_NOTE = " — project notes / reference for this prompt"
+
+		def _line(self, path, open_ch='"', close_ch='"'):
+			"""Build a markdown-ish list item wrapping ``path`` plus a prose annotation."""
+			return "  - " + open_ch + path + self._NOTE + close_ch
+
+		def _dispatch(self, text, cursor):
+			"""Run open_url over ``text`` and capture which action fired."""
+			view = MockView(text)
+			view._window = MockWindow(project_data=None)
+			cmd = OpenUrlCommand(view)
+			cmd.config = dict(_DEFAULT_SETTINGS)
+			got = {}
+			cmd.file_action = lambda p, m, u, location=None: got.update(kind="file", path=p, loc=location)
+			cmd.folder_action = lambda p, m, u: got.update(kind="folder", path=p)
+			cmd.other_action = lambda *a, **k: got.update(kind="other")
+			cmd.open_tab = lambda u: got.update(kind="web", path=u)
+			cmd.modify_or_search_action = lambda u: got.update(kind="search", path=u)
+			view.set_cursor(cursor)
+			cmd.run(None)
+			return got
+
+		def test_selects_path_not_whole_quoted_annotation(self):
+			"""Cursor in the path part of an annotated quoted line selects just the path."""
+			text = self._line(self.file_path)
+			self.assertEqual(_expand(text, 21), self.file_path)
+
+		def test_selects_path_from_every_column_inside_it(self):
+			"""Any column within the path resolves to the path, wrapper and prose ignored."""
+			text = self._line(self.file_path)
+			path_start = text.index(self.file_path)
+			for col in range(path_start, path_start + len(self.file_path) + 1):
+				with self.subTest(col=col):
+					self.assertEqual(_expand(text, col), self.file_path)
+
+		def test_every_enclosing_pair(self):
+			"""The fallback applies to all seven pairs, not just double quotes."""
+			for open_ch, close_ch in open_url.ENCLOSING_PAIRS:
+				with self.subTest(pair=open_ch + close_ch):
+					text = self._line(self.file_path, open_ch, close_ch)
+					self.assertEqual(_expand(text, 21), self.file_path)
+
+		def test_opens_the_file(self):
+			"""End to end: the annotated line dispatches file_action on the real file."""
+			got = self._dispatch(self._line(self.file_path), 21)
+			self.assertEqual(got.get("kind"), "file")
+			self.assertEqual(got.get("path"), self.file_path)
+
+		def test_deep_link_suffix_survives_the_fallback(self):
+			"""A ':N' on the annotated path still opens at that line."""
+			text = self._line(self.file_path + ":2")
+			self.assertEqual(_expand(text, 21), self.file_path + ":2")
+			got = self._dispatch(text, 21)
+			self.assertEqual(got.get("kind"), "file")
+			self.assertEqual(got.get("path"), self.file_path)
+			self.assertEqual(got.get("loc"), {"type": "line", "value": 2})
+
+		def test_url_in_annotated_quotes(self):
+			"""An explicit scheme resolves the same way — no filesystem needed."""
+			text = '  - "https://example.com/x?a=1' + self._NOTE + '"'
+			self.assertEqual(_expand(text, 15), "https://example.com/x?a=1")
+
+		def test_spaced_real_path_still_selects_whole(self):
+			"""A wrapped path that does resolve keeps winning, spaces and all."""
+			text = '"' + self.spacey_path + '"'
+			self.assertEqual(_expand(text, 8), self.spacey_path)
+
+		def test_nothing_resolvable_keeps_the_whole_wrapped_text(self):
+			"""When neither the wrapper nor the bare token resolves, behavior is unchanged."""
+			inner = os.path.join(self.dir, "does not exist.txt") + self._NOTE
+			self.assertEqual(_expand('  - "' + inner + '"', 21), inner)
+
+		def test_cursor_in_prose_keeps_the_whole_wrapped_text(self):
+			"""Only a resolvable token under the cursor triggers the fallback."""
+			text = self._line(self.file_path)
+			col = text.index("reference")
+			self.assertEqual(_expand(text, col), self.file_path + self._NOTE)
 
 	class TestDelimiterConsistency(unittest.TestCase):
 		"""The hardcoded delimiter set and the ``delimiters`` setting must not drift."""
@@ -1527,6 +1632,61 @@ if "sublime" not in sys.modules:
 			self.assertEqual(open_url.wrap_for_reselection('say "hi" now'), "'say \"hi\" now'")
 			# contains both " and ' -> fall back to backtick
 			self.assertEqual(open_url.wrap_for_reselection('a "b" \'c\' d'), "`a \"b\" 'c' d`")
+
+		def test_preferred_char_wins(self):
+			"""plain_text_path_wrap_char is tried before the quote fallbacks."""
+			self.assertEqual(open_url.wrap_for_reselection("a/b c.txt", preferred="`"), "`a/b c.txt`")
+
+		def test_preferred_char_present_falls_back(self):
+			"""A preferred char already in the content falls through to a quote."""
+			self.assertEqual(open_url.wrap_for_reselection("a `b` c", preferred="`"), '"a `b` c"')
+
+		def test_force_wraps_clean_text(self):
+			"""force wraps a deep link whose chars are all re-selection safe."""
+			self.assertEqual(open_url.wrap_for_reselection("notes.txt:42", preferred="`", force=True), "`notes.txt:42`")
+
+		def test_no_preferred_matches_prior_behavior(self):
+			"""Empty preferred keeps the original quote order."""
+			self.assertEqual(open_url.wrap_for_reselection("a/b c.txt", preferred=""), '"a/b c.txt"')
+
+	class TestWrapForCopy(unittest.TestCase):
+		"""copy_path_wrap_char — the copy-side mirror of plain_text_path_wrap_char."""
+
+		def test_deep_link_always_wrapped(self):
+			"""A deep link is enclosed even when every char is re-selection safe."""
+			out = open_url.wrap_for_copy("notes.txt:42", {"copy_path_wrap_char": "`"}, has_loc_suffix=True)
+			self.assertEqual(out, "`notes.txt:42`")
+
+		def test_plain_path_left_bare(self):
+			"""No suffix and no breaking chars: copy the path as-is."""
+			out = open_url.wrap_for_copy("~/a/b/c.txt", {"copy_path_wrap_char": "`"})
+			self.assertEqual(out, "~/a/b/c.txt")
+
+		def test_plain_path_with_space_wrapped(self):
+			"""A space would break re-selection, so wrap even without a suffix."""
+			out = open_url.wrap_for_copy("~/a/b c.txt", {"copy_path_wrap_char": "`"})
+			self.assertEqual(out, "`~/a/b c.txt`")
+
+		def test_backtick_in_path_falls_back(self):
+			"""Wrap char already present falls through to the next quote."""
+			out = open_url.wrap_for_copy("a`b:42", {"copy_path_wrap_char": "`"}, has_loc_suffix=True)
+			self.assertEqual(out, '"a`b:42"')
+
+		def test_empty_setting_copies_bare(self):
+			'''"" disables the copy-side wrap for links that don't need it.'''
+			out = open_url.wrap_for_copy("notes.txt:42", {"copy_path_wrap_char": ""}, has_loc_suffix=True)
+			self.assertEqual(out, "notes.txt:42")
+
+		def test_empty_setting_never_wraps(self):
+			'''"" is fully off — even a space-bearing path copies verbatim (prior behavior).'''
+			out = open_url.wrap_for_copy("a/b c.txt:42", {"copy_path_wrap_char": ""}, has_loc_suffix=True)
+			self.assertEqual(out, "a/b c.txt:42")
+
+		def test_round_trips_through_paste_unwrap(self):
+			"""A wrapped link survives paste_relative_path's strip-then-split order."""
+			link = open_url.wrap_for_copy("~/notes.txt:42", {"copy_path_wrap_char": "`"}, has_loc_suffix=True)
+			path, suffix = open_url.split_path_and_loc_suffix(open_url.strip_enclosing_pair(link))
+			self.assertEqual((path, suffix), ("~/notes.txt", ":42"))
 
 	# =====================================================================
 	# autoactions + sentinel commands + opener fields
@@ -2046,8 +2206,12 @@ if "sublime" not in sys.modules:
 	class TestCopyDeepLinkBuildsLink(unittest.TestCase):
 		"""Smoke test the link-building branches without exercising the subprocess path."""
 
-		def _run(self, text, cursor=None, selection=None, line_only=False):
-			"""Helper that drives CopyDeepLinkCommand under controlled conditions."""
+		def _run(self, text, cursor=None, selection=None, line_only=False, wrap=""):
+			"""Helper that drives CopyDeepLinkCommand under controlled conditions.
+
+			``wrap`` defaults to "" so these cases assert the link construction itself;
+			the copy_path_wrap_char enclosure is covered separately below.
+			"""
 			view = MockView(text)
 			view._file_name = "/tmp/foo.md"
 			view._window = MockWindow(project_data=None)
@@ -2060,7 +2224,7 @@ if "sublime" not in sys.modules:
 			saved_settings = _mock_sublime.load_settings
 			_mock_sublime.set_clipboard = lambda x: captured.setdefault("clip", x)
 			_mock_sublime.load_settings = lambda name: _MockSettings(
-				{"copy_path_transform": "", "deep_link_line_number_only": line_only}
+				{"copy_path_transform": "", "deep_link_line_number_only": line_only, "copy_path_wrap_char": wrap}
 			)
 			try:
 				cmd = open_url.CopyDeepLinkCommand(view)
@@ -2158,6 +2322,28 @@ if "sublime" not in sys.modules:
 					# re-selection: cursor anywhere in the pasted link grabs all of it
 					for col in (0, len(link) // 2, len(link) - 1):
 						self.assertEqual(_expand(link, col), link, "col %d of %s" % (col, link))
+
+		def test_wrap_char_encloses_copied_link(self):
+			"""copy_path_wrap_char encloses the whole link, suffix included."""
+			link = self._run("hello\n\nworld", cursor=6, wrap="`")
+			self.assertEqual(link, "`/tmp/foo.md:2`")
+
+		def test_wrap_char_encloses_regex_form(self):
+			"""The regex form -- quotes, spaces and all -- comes out enclosed once."""
+			link = self._run('# 2026 "The Brothers"\nnext', cursor=0, wrap="`")
+			self.assertEqual(link, '`/tmp/foo.md:1:/^# 2026 "The Brothers"/`')
+
+		def test_wrap_char_present_in_link_falls_back(self):
+			"""A backtick in the line content forces the next available quote."""
+			link = self._run("a `b` c\nnext", cursor=0, wrap="`")
+			self.assertTrue(link.startswith('"') and link.endswith('"'), link)
+
+		def test_wrapped_link_still_parses_after_unwrap(self):
+			"""Stripping the pair (what paste does) leaves a parseable deep link."""
+			link = self._run("hello world foo bar baz\nnext", cursor=0, wrap="`")
+			path, loc = parse_file_location(open_url.strip_enclosing_pair(link))
+			self.assertEqual(path, "/tmp/foo.md")
+			self.assertEqual(loc["type"], "regex")
 
 		def test_legacy_line_only_form_parses(self):
 			# Just :42 — the original form, no regex / no search
@@ -2299,6 +2485,89 @@ if "sublime" not in sys.modules:
 			cmd._navigate_in_view(view, {"type": "regex", "value": "zzz", "line": 7})
 			# Fallback path adds a region; chosen is non-empty
 			self.assertTrue(len(chosen) >= 1)
+
+	# =====================================================================
+	# run in terminal
+	# =====================================================================
+
+	class TestRunInTerminal(unittest.TestCase):
+		def test_script_cds_and_keeps_shell(self):
+			"""Script cds and keeps shell."""
+			script = open_url._terminal_launcher_script("/tmp/d")
+			self.assertEqual(script.splitlines(), ["cd /tmp/d", 'exec "$SHELL" -il'])
+
+		def test_script_quotes_folder_with_spaces(self):
+			"""Script quotes folder with spaces."""
+			script = open_url._terminal_launcher_script("/tmp/my dir")
+			self.assertEqual(script, "cd '/tmp/my dir'\nexec \"$SHELL\" -il\n")
+
+		def test_nothing_is_executed(self):
+			"""Nothing is executed."""
+			self.assertEqual(len(open_url._terminal_launcher_script("/tmp/d").splitlines()), 2)
+
+		def test_iterm_uses_applescript_new_window(self):
+			"""Iterm uses applescript new window."""
+			args = open_url._osx_terminal_args("/tmp/l.command", "iTerm")
+			self.assertEqual(args[0], "osascript")
+			self.assertIn("create window with default profile", args[2])
+			self.assertIn("/tmp/l.command", args[2])
+
+		def test_iterm_never_types_the_launcher(self):
+			"""The launcher is the session's command, not text written to its shell.
+
+			``write text`` races the shell's startup: on a cold iTerm the line lands at
+			the prompt unexecuted.
+			"""
+			args = open_url._osx_terminal_args("/tmp/l.command", "iTerm")
+			self.assertNotIn("write text", args[2])
+			self.assertIn('command "/tmp/l.command"', args[2])
+
+		def test_iterm_app_path_is_recognized(self):
+			"""Iterm app path is recognized."""
+			args = open_url._osx_terminal_args("/tmp/l.command", "/Applications/iTerm.app")
+			self.assertEqual(args[0], "osascript")
+
+		def test_terminal_uses_do_script(self):
+			"""Terminal uses do script."""
+			args = open_url._osx_terminal_args("/tmp/l.command", "Terminal")
+			self.assertEqual(args[0], "osascript")
+			self.assertIn("activate", args[2])  # activate first: do script on a cold Terminal can fail
+			self.assertIn("do script", args[4])
+			self.assertIn('"/tmp/l.command"', args[4])
+
+		def test_no_app_uses_open(self):
+			"""No app uses open."""
+			self.assertEqual(open_url._osx_terminal_args("/tmp/l.command", ""), ["open", "/tmp/l.command"])
+
+		def test_other_app_uses_open_dash_a(self):
+			"""Other app uses open dash a."""
+			args = open_url._osx_terminal_args("/tmp/l.command", "WezTerm")
+			self.assertEqual(args, ["open", "-a", "WezTerm", "/tmp/l.command"])
+
+		def test_sentinel_is_registered(self):
+			"""Sentinel is registered."""
+			self.assertIn("run_in_terminal", open_url.BUILTIN_COMMANDS)
+
+		def test_palette_command_exists_and_needs_a_saved_file(self):
+			"""Palette command exists and needs a saved file."""
+			view = MockView("")
+			cmd = open_url.RunInTerminalCommand(view)
+			self.assertFalse(cmd.is_enabled())
+			view._file_name = "/tmp/d/notes.md"
+			self.assertTrue(cmd.is_enabled())
+
+		def test_palette_command_targets_the_files_folder(self):
+			"""Palette command targets the files folder."""
+			view = MockView("")
+			view._file_name = "/tmp/d/notes.md"
+			captured = []
+			saved = open_url.run_in_terminal
+			open_url.run_in_terminal = lambda path, app="": captured.append((path, app))
+			try:
+				open_url.RunInTerminalCommand(view).run()
+			finally:
+				open_url.run_in_terminal = saved
+			self.assertEqual(captured, [("/tmp/d", "")])
 
 
 if __name__ == "__main__":

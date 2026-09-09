@@ -5,5 +5,6 @@
   { "caption": "Open URL: Use Input",             "command": "open_url",       "args": { "show_input": true } },
   { "caption": "Open URL: Copy Deep Link",        "command": "copy_deep_link" },
   { "caption": "Open URL: Copy Transformed Path", "command": "copy_transformed_path" },
-  { "caption": "Open URL: Paste Relative Path",   "command": "paste_relative_path" }
+  { "caption": "Open URL: Paste Relative Path",   "command": "paste_relative_path" },
+  { "caption": "Open URL: System Open this File", "command": "system_open_this_file" }
 ]

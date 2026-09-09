@@ -29,6 +29,14 @@
     ]
   },
   {
+    // ctrl+alt+o is taken by SFTP and OmniMarkupPreviewer on these platforms
+    "keys": ["ctrl+alt+shift+o"],
+    "command": "system_open_this_file",
+    "context": [
+      { "key": "setting.open_url.disable_default_key_bindings", "operator": "not_equal", "operand": true }
+    ]
+  },
+  {
     "keys": ["ctrl+alt+shift+c"],
     "command": "copy_transformed_path",
     "context": [

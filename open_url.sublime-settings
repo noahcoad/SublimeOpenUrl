@@ -39,8 +39,32 @@
   // example: "/opt/homebrew/bin/python3 ~/scripts/shortpath.py {path}"
   "copy_path_transform": "",
 
+  // terminal app used by the "run in terminal" action. empty = the OS default terminal
+  // (on macOS, whichever app opens .command scripts; on Linux, x-terminal-emulator).
+  // example, osx: "iTerm"   example, linux: "gnome-terminal"
+  "terminal_app": "",
+
   // when pasting a relative path into a markdown file, wrap the result in backticks
   "paste_relative_path_markdown_backticks": true,
+
+  // character used to enclose a pasted path in NON-markdown views (.txt, plain text, code)
+  // when it needs enclosing -- it contains a space or other char that would stop token
+  // re-selection, or it carries a deep-link suffix (file.txt:42, :"text", :/regex/).
+  // a backtick matches what markdown views do; set to "\"" for double quotes, or ""
+  // to disable and fall back to the old behavior (quote only when a char would break
+  // re-selection, and never for a bare deep link). if the char already appears in the
+  // path, the next available quote (", ', `) is used instead.
+  "plain_text_path_wrap_char": "`",
+
+  // character used to enclose a path or deep link put on the clipboard by
+  // Copy Deep Link / Copy Transformed Path -- the copy-side mirror of
+  // "plain_text_path_wrap_char", same rules, applied at copy time instead of
+  // paste time. a deep link (file.txt:42, :"text", :/regex/) is always enclosed;
+  // a plain path only when it contains a space or other char that would stop
+  // token re-selection. if the char already appears in the path, the next
+  // available quote (", ', `) is used instead. set to "" to copy bare.
+  // Paste Relative Path strips one enclosing pair, so links round-trip.
+  "copy_path_wrap_char": "`",
 
   // path transforms — applied in order: aliases → search_paths × file_prefixes × file_suffixes
   // first combination that resolves to an existing file or folder wins.
@@ -69,7 +93,7 @@
   // the "commands" field accepts:
   //   - an array (argv; the path is appended unless an element contains "$url")
   //   - a string (run via shell; "$url" replaced or path appended)
-  //   - a reserved sentinel: "edit_in_sublime", "open_in_new_window", "system_open", "add_to_project"
+  //   - a reserved sentinel: "edit_in_sublime", "open_in_new_window", "system_open", "add_to_project", "run_in_terminal"
   // Note: a synthetic "edit" entry is always prepended to this list at runtime,
   // which opens the file in Sublime (honoring any deep-link suffix). No need to
   // include it here.
@@ -78,6 +102,7 @@
     { "label": "reveal", "os": "windows", "commands": ["explorer", "/select,"] },
     { "label": "reveal", "os": "linux",   "commands": ["nautilus", "--browser"] },
     { "label": "new window",          "commands": "open_in_new_window" },
+    // { "label": "run in terminal",     "commands": "run_in_terminal" },   // paused 2026-09-02, see docs/lessons.md
     { "label": "system open",         "commands": "system_open" }
   ],
 
@@ -87,6 +112,7 @@
     { "label": "reveal", "os": "osx",     "commands": ["open"] },
     { "label": "reveal", "os": "windows", "commands": ["explorer"] },
     { "label": "reveal", "os": "linux",   "commands": ["nautilus", "--browser"] },
+    // { "label": "run in terminal",     "commands": "run_in_terminal" },   // paused 2026-09-02, see docs/lessons.md
     { "label": "add to project",      "commands": "add_to_project" }
   ],
 

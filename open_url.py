@@ -6,6 +6,8 @@ Public commands (registered with Sublime Text):
 	copy_deep_link         — copy a ``path:LINE:/regex/`` link pointing at the cursor
 	copy_transformed_path  — copy the current file path through ``copy_path_transform``
 	paste_relative_path    — paste a clipboard path normalized to the shortest form
+	system_open_this_file  — hand the current file to the OS default opener
+	run_in_terminal        — open a terminal window in the current file's folder
 
 Module entry points:
 	OpenUrlCommand.run / handle  — the resolution cascade (file -> folder -> web URL -> custom -> search)
@@ -19,7 +21,7 @@ Settings live in ``open_url.sublime-settings`` (see README for the full list of 
 settings replace defaults entry-by-entry; project ``["settings"]["open_url"]`` overrides both.
 
 Sentinel command names (used in ``commands`` strings inside ``*_custom_commands``):
-	edit_in_sublime, open_in_new_window, system_open, add_to_project
+	edit_in_sublime, open_in_new_window, system_open, add_to_project, run_in_terminal
 These dispatch in-process via ``_run_builtin`` rather than spawning a subprocess.
 
 Repository: https://github.com/noahcoad/open-url
@@ -30,7 +32,9 @@ from __future__ import annotations
 import os
 import re
 import shlex
+import shutil
 import subprocess
+import tempfile
 import threading
 import urllib.parse
 import webbrowser
@@ -60,7 +64,10 @@ Settings = TypedDict(
 		"deep_link_line_number_only": bool,
 		"copy_path_transform": str,
 		"paste_relative_path_markdown_backticks": bool,
+		"plain_text_path_wrap_char": str,
+		"copy_path_wrap_char": str,
 		"autoactions": list,
+		"terminal_app": str,
 	},
 )
 
@@ -81,7 +88,10 @@ settings_keys = [
 	"deep_link_line_number_only",
 	"copy_path_transform",
 	"paste_relative_path_markdown_backticks",
+	"plain_text_path_wrap_char",
+	"copy_path_wrap_char",
 	"autoactions",
+	"terminal_app",
 ]
 
 # Reserved built-in command names recognized when an opener's "commands" is a string.
@@ -93,6 +103,7 @@ BUILTIN_COMMANDS: frozenset[str] = frozenset(
 		"open_in_new_window",
 		"system_open",
 		"add_to_project",
+		"run_in_terminal",
 	}
 )
 
@@ -134,6 +145,16 @@ def _var_brace_indices(text: str) -> frozenset[int]:
 		out.add(m.start() + 1)
 		out.add(m.end() - 1)
 	return frozenset(out)
+
+
+# ``<!-- ... -->`` is a comment marker, not an angle-bracket pair — otherwise an
+# HTML comment wrapping prose swallows any URL inside it as one spaced "token".
+_COMMENT_MARKER_RE = re.compile(r"<!--|-->")
+
+
+def _comment_marker_indices(text: str) -> frozenset[int]:
+	"""Indices of the ``<`` / ``>`` chars of every ``<!--`` / ``-->`` marker in ``text``."""
+	return frozenset(m.start() if m.group(0)[0] == "<" else m.end() - 1 for m in _COMMENT_MARKER_RE.finditer(text))
 
 
 def strip_enclosing_pair(text: str) -> str:
@@ -199,7 +220,7 @@ def find_enclosing_span(line: str, col: int) -> tuple[int, int] | None:
 	(``[my file.py]:42``), the wrapper is kept and the span runs through the
 	suffix — ``parse_file_location`` strips the pair later.
 	"""
-	skip = _var_brace_indices(line)
+	skip = _var_brace_indices(line) | _comment_marker_indices(line)
 	spans = []
 	for open_ch, close_ch in ENCLOSING_PAIRS:
 		span = (
@@ -529,6 +550,86 @@ def _wrap_in_terminal(args, *, pause: bool) -> tuple[list, dict]:
 	return (args, {})
 
 
+def _terminal_launcher_script(folder: str) -> str:
+	"""Build the sh script the terminal window runs: cd to ``folder``, then hand over an interactive shell."""
+	return f"cd {shlex.quote(folder)}\nexec \"$SHELL\" -il\n"
+
+
+def _as_string(value: str) -> str:
+	"""Quote ``value`` as an AppleScript string literal (backslash and quote are the only escapes)."""
+	return '"%s"' % value.replace("\\", "\\\\").replace('"', '\\"')
+
+
+def _osx_terminal_args(launcher: str, app: str) -> list:
+	"""Args that open ``launcher`` (a .command file) in a macOS terminal.
+
+	``open`` alone respects the app's own window-vs-tab preference — iTerm typically
+	opens a tab — so for the two scriptable defaults we drive AppleScript instead and
+	get a guaranteed new window. Any other app falls back to ``open [-a app]``.
+
+	iTerm gets the launcher as the new session's ``command``, not as typed-in text:
+	``write text`` into a just-created session races the shell's startup, and on a cold
+	iTerm the line lands at the prompt without ever being run.
+	"""
+	name = os.path.basename(app).lower()
+	if name.endswith(".app"): name = name[:-4]  # str.removesuffix is 3.9+; ST runs Python 3.8
+	quoted = _as_string(launcher)
+	if name in ("iterm", "iterm2"):
+		script = (
+			'tell application "iTerm"\n'
+			"\tactivate\n"
+			f"\tcreate window with default profile command {quoted}\n"
+			"end tell"
+		)
+		return ["osascript", "-e", script]
+	if name == "terminal":
+		return ["osascript", "-e", 'tell application "Terminal" to activate', "-e", f'tell application "Terminal" to do script {quoted}']
+	return ["open", "-a", app, launcher] if app else ["open", launcher]
+
+
+def run_in_terminal(path: str, app: str = "") -> None:
+	"""Open a new terminal window with its cwd at ``path`` (a file's folder, or the folder itself).
+
+	Nothing is executed — you land in an interactive shell, ready to type. The
+	terminal is the ``terminal_app`` setting, else the OS default. On macOS the cd is
+	staged in a throwaway ``.command`` launcher; with no ``terminal_app`` that's
+	handed to ``open``, so whichever app claims shell scripts takes it (and decides
+	window vs. tab). On Linux, ``terminal_app`` overrides the ``x-terminal-emulator``
+	alternatives symlink, which falls back to xterm.
+	"""
+	platform = sublime.platform()
+	target = os.path.abspath(os.path.expanduser(path))
+	folder = target if os.path.isdir(target) else os.path.dirname(target)
+
+	if platform == "windows":
+		args = ["cmd.exe", "/c", "start", "", "cmd.exe", "/k", f'cd /d "{folder}"']
+	else:
+		script = _terminal_launcher_script(folder)
+		if platform == "osx":
+			launcher = os.path.join(tempfile.mkdtemp(prefix="open-url-"), "run-in-terminal.command")
+			with open(launcher, "w") as f:
+				f.write("#!/bin/sh\n" + script)
+			os.chmod(launcher, 0o755)
+			args = _osx_terminal_args(launcher, app)
+		else:
+			emulator = app or ("x-terminal-emulator" if shutil.which("x-terminal-emulator") else "xterm")
+			args = [emulator, "-e", f"sh -c {shlex.quote(script)}"]
+
+	threading.Thread(target=lambda: subprocess.Popen(args)).start()
+
+
+def system_open(path: str) -> None:
+	"""Hand ``path`` off to the OS default opener (``open`` / ``xdg-open`` / ``cmd /c start``)."""
+	platform = sublime.platform()
+	if platform == "osx":
+		args = ["open", path]
+	elif platform == "windows":
+		args = ["cmd.exe", "/c", "start", "", path]
+	else:
+		args = ["xdg-open", path]
+	threading.Thread(target=lambda: subprocess.Popen(args)).start()
+
+
 class OpenUrlCommand(sublime_plugin.TextCommand):
 	config: Settings
 
@@ -687,9 +788,6 @@ class OpenUrlCommand(sublime_plugin.TextCommand):
 		if start != end:
 			return sublime.Region(start, end)
 
-		view_size = self.view.size()
-		terminator = TOKEN_TERMINATORS
-
 		# A deep link whose regex/search body holds spaces or quotes can't be found by
 		# either branch below, so match the whole token on the line first.
 		line_region = self.view.line(start)
@@ -704,11 +802,30 @@ class OpenUrlCommand(sublime_plugin.TextCommand):
 		if span is not None:
 			return sublime.Region(line_begin + span[0], line_begin + span[1])
 
-		# If the cursor sits inside an enclosing pair, that pair defines the token.
+		# If the cursor sits inside an enclosing pair, that pair defines the token —
+		# unless the wrapped text doesn't resolve while the bare token under the
+		# cursor does, as in an annotated list item where the quotes wrap path *and*
+		# prose: - "~/txt/notes.txt — reference for this prompt"
 		enclosing = find_enclosing_span(line_text, col)
 		if enclosing is not None:
-			return sublime.Region(line_begin + enclosing[0], line_begin + enclosing[1])
+			wrapped = sublime.Region(line_begin + enclosing[0], line_begin + enclosing[1])
+			if self._resolves_strictly(self.view.substr(wrapped).strip()):
+				return wrapped
+			bare = self._bare_token_region(start, end, line_text, line_begin)
+			if self._resolves_strictly(self.view.substr(bare).strip()):
+				return bare
+			return wrapped
 
+		return self._bare_token_region(start, end, line_text, line_begin)
+
+	def _bare_token_region(self, start: int, end: int, line_text: str, line_begin: int) -> "sublime.Region":
+		"""Expand ``start``/``end`` outward over an unwrapped token, stopping at TOKEN_TERMINATORS.
+
+		Deep-link suffixes (``:42``, ``:"text"``, ``:/regex/``) stay attached, as do
+		``${VAR}`` braces and backslash-escaped chars.
+		"""
+		view_size = self.view.size()
+		terminator = TOKEN_TERMINATORS
 		skip = _var_brace_indices(line_text)
 
 		# ${VAR} braces are part of the path, so they never terminate the token
@@ -763,6 +880,30 @@ class OpenUrlCommand(sublime_plugin.TextCommand):
 	def selection(self) -> str:
 		"""Convenience: text of find_selection() with surrounding whitespace stripped."""
 		return self.view.substr(self.find_selection()).strip()
+
+	def _resolves_strictly(self, text: str | None) -> bool:
+		"""True if ``text`` exists on disk or carries an explicit URL scheme.
+
+		Deliberately stricter than ``_is_resolvable``: it skips the bare-domain
+		heuristic, since ``is_url`` accepts anything ending in a TLD-shaped
+		extension (``file.py``, ``~/OneDrive-amazon.com/Q``). find_selection uses it
+		to decide whether an enclosing pair really wraps the thing to open, and a
+		false positive there would pick the wrong region.
+		"""
+		if not text or not text.strip():
+			return False
+		text = strip_enclosing_pair(text.strip())
+		# a scheme only makes it a URL if it's a single token — prose around a URL isn't one
+		if "://" in text and len(text.split()) == 1 and not text.lower().startswith("file://"):
+			return True
+		if text.lower().startswith("file://"):
+			text = strip_file_scheme(text)
+		path, _ = parse_file_location(text)
+		path = os.path.expandvars(os.path.expanduser(path))
+		if os.path.exists(path):
+			return True
+		base = os.path.dirname(self.view.file_name() or "")
+		return bool(base) and os.path.exists(os.path.normpath(os.path.join(base, path)))
 
 	def _is_resolvable(self, url: str | None) -> bool:
 		"""True if url is a web URL, matches a domain pattern, or resolves to a file/dir.
@@ -1036,6 +1177,9 @@ class OpenUrlCommand(sublime_plugin.TextCommand):
 		if name == "add_to_project":
 			self._add_to_project(path)
 			return
+		if name == "run_in_terminal":
+			run_in_terminal(path, self.config.get("terminal_app") or "")
+			return
 
 	def _open_in_new_window(self, path: str) -> None:
 		"""Open ``path`` in a Sublime window using the running ST instance.
@@ -1061,15 +1205,8 @@ class OpenUrlCommand(sublime_plugin.TextCommand):
 		subprocess.Popen(args, cwd=cwd)
 
 	def _system_open(self, path: str) -> None:
-		"""Hand ``path`` off to the OS default opener (``open`` / ``xdg-open`` / ``cmd /c start``)."""
-		platform = sublime.platform()
-		if platform == "osx":
-			args = ["open", path]
-		elif platform == "windows":
-			args = ["cmd.exe", "/c", "start", "", path]
-		else:
-			args = ["xdg-open", path]
-		threading.Thread(target=lambda: subprocess.Popen(args)).start()
+		"""Hand ``path`` off to the OS default opener."""
+		system_open(path)
 
 	def _add_to_project(self, folder: str) -> None:
 		"""Append ``folder`` to the current Sublime window's project folder list."""
@@ -1347,6 +1484,8 @@ class CopyDeepLinkCommand(sublime_plugin.TextCommand):
 	can prefer the match nearest that line when the pattern is ambiguous.
 	Setting ``deep_link_line_number_only`` collapses all three to line numbers.
 	Setting ``copy_path_transform`` pipes file_path through a shell command first.
+	Setting ``copy_path_wrap_char`` encloses the copied link (backtick by default),
+	the copy-side mirror of ``plain_text_path_wrap_char``.
 	"""
 
 	def run(self, edit=None) -> None:
@@ -1394,12 +1533,17 @@ class CopyDeepLinkCommand(sublime_plugin.TextCommand):
 				prefix = r"^\s*" if has_leading else "^"
 				link = "%s:%d:/%s%s/" % (file_path, line_num, prefix, escaped)
 
+		link = wrap_for_copy(link, config, has_loc_suffix=link != file_path)
 		sublime.set_clipboard(link)
 		sublime.status_message("Copied: %s" % link)
 
 
 class CopyTransformedPathCommand(sublime_plugin.TextCommand):
-	"""Copy current file path through ``copy_path_transform``. Hidden when unset."""
+	"""Copy current file path through ``copy_path_transform``. Hidden when unset.
+
+	The result is enclosed per ``copy_path_wrap_char`` when it contains chars that
+	would break token re-selection (a bare path with no spaces is copied as-is).
+	"""
 
 	def run(self, edit=None) -> None:
 		"""Run ``copy_transformed_path``: pipe the current file's path through ``copy_path_transform`` and copy it."""
@@ -1407,7 +1551,8 @@ class CopyTransformedPathCommand(sublime_plugin.TextCommand):
 		if not file_path:
 			sublime.status_message("File has no path")
 			return
-		transform = _settings_obj().get("copy_path_transform", "")
+		config = _settings_obj()
+		transform = config.get("copy_path_transform", "")
 		if not transform:
 			sublime.status_message("copy_path_transform is not configured")
 			return
@@ -1416,12 +1561,58 @@ class CopyTransformedPathCommand(sublime_plugin.TextCommand):
 			sublime.status_message(err)
 			print("open_url " + err)
 			return
-		sublime.set_clipboard(new_path or "")
+		new_path = wrap_for_copy(new_path or "", config)
+		sublime.set_clipboard(new_path)
 		sublime.status_message("Copied: %s" % new_path)
 
 	def is_visible(self) -> bool:
 		"""Hide this palette entry unless ``copy_path_transform`` is configured."""
 		return bool(_settings_obj().get("copy_path_transform", ""))
+
+
+class SystemOpenThisFileCommand(sublime_plugin.TextCommand):
+	"""Hand the current view's own file to the OS default opener.
+
+	Same handoff as the ``system_open`` menu action in Open URL, but the target
+	is the file you're editing rather than a path under the cursor — useful for
+	previewing markdown/HTML/images in their registered app without leaving ST.
+	"""
+
+	def run(self, edit=None) -> None:
+		"""Run ``system_open_this_file``: hand the current file to the OS default opener."""
+		file_path = self.view.file_name()
+		if not file_path:
+			sublime.status_message("File has no path")
+			return
+		system_open(file_path)
+		sublime.status_message("System opened: %s" % file_path)
+
+	def is_enabled(self) -> bool:
+		"""Only meaningful for a view backed by a file on disk."""
+		return bool(self.view and self.view.file_name())
+
+
+class RunInTerminalCommand(sublime_plugin.TextCommand):
+	"""Open a terminal window in the folder of the view's own file.
+
+	Sibling of System Open this File: same "act on the file I'm editing, no cursor
+	target needed" idea, but you land in a shell at that folder instead of handing
+	the file to its registered app. Terminal choice is the ``terminal_app`` setting.
+	"""
+
+	def run(self, edit=None) -> None:
+		"""Run ``run_in_terminal``: open a terminal at the current file's folder."""
+		file_path = self.view.file_name()
+		if not file_path:
+			sublime.status_message("File has no path")
+			return
+		folder = os.path.dirname(file_path)
+		run_in_terminal(folder, _settings_obj().get("terminal_app", "") or "")
+		sublime.status_message("Terminal: %s" % folder)
+
+	def is_enabled(self) -> bool:
+		"""Only meaningful for a view backed by a file on disk."""
+		return bool(self.view and self.view.file_name())
 
 
 def path_hop_count(path: str) -> int:
@@ -1452,7 +1643,7 @@ def select_shortest_path_form(*candidates: str) -> str:
 _RESELECTION_BREAKERS = TOKEN_TERMINATORS
 
 
-def wrap_for_reselection(text: str) -> str:
+def wrap_for_reselection(text: str, preferred: str = "", force: bool = False) -> str:
 	"""Wrap ``text`` in a quote char if it contains chars that would break re-selection.
 
 	find_selection() stops token expansion at whitespace, brackets, angle/comma,
@@ -1461,13 +1652,35 @@ def wrap_for_reselection(text: str) -> str:
 	quote lets find_selection's enclosing-pair branch grab it in one shot. Picks a
 	quote char (", ', then `) not already present in the content; if all three
 	appear, returns the text unwrapped.
+
+	``preferred`` (from ``plain_text_path_wrap_char``) is tried ahead of those three,
+	so plain-text views can match markdown's backticks. ``force`` wraps even when
+	nothing would break re-selection — used for deep links, whose ``:`` isn't a
+	terminator but which still read better enclosed.
 	"""
-	if not (_RESELECTION_BREAKERS & set(text) or any(q in text for q in "\"'`")):
+	if not (force or _RESELECTION_BREAKERS & set(text) or any(q in text for q in "\"'`")):
 		return text
-	for q in ('"', "'", "`"):
-		if q not in text:
+	for q in (preferred, '"', "'", "`"):
+		if q and q not in text:
 			return q + text + q
 	return text
+
+
+def wrap_for_copy(text: str, config=None, has_loc_suffix: bool = False) -> str:
+	"""Enclose a path/deep link headed for the clipboard, per ``copy_path_wrap_char``.
+
+	The copy-side mirror of ``plain_text_path_wrap_char``: same rules, applied when
+	the link is produced rather than when it's pasted. Wraps when ``text`` holds a
+	re-selection breaker, or (with a wrap char set) when it carries a deep-link
+	suffix — so ``copy_deep_link`` output lands as one selectable token wherever it
+	goes. Set ``copy_path_wrap_char`` to ``""`` to copy bare.
+
+	``paste_relative_path`` strips one enclosing pair off the clipboard, so a
+	wrapped link round-trips without doubling up.
+	"""
+	wrap_char = (config if config is not None else _settings_obj()).get("copy_path_wrap_char", "`")
+	if not wrap_char: return text
+	return wrap_for_reselection(text, preferred=wrap_char, force=has_loc_suffix)
 
 
 class PasteRelativePathCommand(sublime_plugin.TextCommand):
@@ -1477,11 +1690,15 @@ class PasteRelativePathCommand(sublime_plugin.TextCommand):
 	- tilde-shortened path (~/...)
 	- the absolute expansion as-is
 
+	One enclosing pair is stripped off the clipboard first, so a link copied with
+	``copy_path_wrap_char`` doesn't come back double-wrapped.
+
 	web URLs (containing ``://``) are pasted as-is. Markdown views auto-wrap
 	pastes in backticks (controlled by ``paste_relative_path_markdown_backticks``).
 	Outside markdown, results containing chars that would break token re-selection
-	(spaces, apostrophes, brackets, etc.) are wrapped in a quote via
-	``wrap_for_reselection``.
+	(spaces, apostrophes, brackets, etc.) — or carrying a deep-link suffix — are
+	wrapped via ``wrap_for_reselection``, preferring ``plain_text_path_wrap_char``
+	(a backtick by default, matching markdown).
 	"""
 
 	def run(self, edit) -> None:
@@ -1489,6 +1706,10 @@ class PasteRelativePathCommand(sublime_plugin.TextCommand):
 		raw = sublime.get_clipboard().strip()
 		if not raw:
 			return
+
+		# Unwrap first: copy_path_wrap_char encloses the whole link, suffix included,
+		# so splitting before stripping would leave the closing quote in the suffix.
+		raw = strip_enclosing_pair(raw).strip()
 
 		if raw.lower().startswith("file://"):
 			raw = strip_file_scheme(raw)
@@ -1535,7 +1756,8 @@ class PasteRelativePathCommand(sublime_plugin.TextCommand):
 				is_markdown = True
 				result = "`" + result + "`"
 		if not is_markdown:
-			result = wrap_for_reselection(result)
+			wrap_char = config.get("plain_text_path_wrap_char", "`")
+			result = wrap_for_reselection(result, preferred=wrap_char, force=bool(wrap_char and loc_suffix))
 
 		regions = list(self.view.sel())
 		self.view.sel().clear()

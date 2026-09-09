@@ -7,6 +7,8 @@ Open files, folders, web URLs, and search queries from anywhere in Sublime Text 
 - **Copy Deep Link** — copy a `path:line:/regex/` link pointing at the cursor.
 - **Copy Transformed Path** — copy the current file path through a user-supplied shell transform (clipboard normalizers, anonymizers, etc.).
 - **Paste Relative Path** — paste a clipboard path as the shortest of relative / `~/...` / absolute, with markdown backtick wrapping.
+- **System Open this File** — hand the file you're editing to the OS default opener, no cursor target needed.
+- **Run in Terminal** — open a terminal window in the folder of the file you're editing. *(Currently disabled — see [Run in Terminal](#run-in-terminal).)*
 
 ## Install
 
@@ -56,6 +58,16 @@ Details:
 - `${VAR}` braces are part of the path, never a delimiter pair — `${HOME}/Desktop` selects whole.
 - Backslash-escaped spaces (`~/a\ b.txt`) also work, unwrapped.
 
+#### Wrapped path *plus* prose
+
+When the quotes wrap a path **and** a comment, the whole thing isn't a path — so the wrapper is ignored and the token under the cursor is used instead:
+
+```
+  - "~/txt/aws/qcst/prj_wbr_weekly_customer_project_status.txt — project notes / reference for this prompt"
+```
+
+Cursor anywhere in the path opens the file; a `:42` deep-link suffix on it still works. This only kicks in when the wrapped text doesn't resolve *and* the bare token does resolve — on disk, or as a URL with an explicit scheme — so a genuine spaced path (`"~/Q CST - ALL/3M"`) still selects whole. Put the cursor in the prose half instead and you get the whole quoted string (which then falls through to a web search).
+
 ### Markdown links
 
 The cursor can sit **anywhere** inside an inline markdown link — on either bracket, inside the label, on the paren, or in the target — and Open URL resolves the *target*:
@@ -80,8 +92,8 @@ Details:
 
 After expanding the selection (using `delimiters`), Open URL tries the following in order. The first match wins.
 
-1. **File** — opens it in Sublime, or shows a menu (edit / reveal / new window / system open).
-2. **Folder** — shows a menu (new window / reveal / add to project).
+1. **File** — opens it in Sublime, or shows a menu (edit / reveal / new window / run in terminal / system open).
+2. **Folder** — shows a menu (new window / reveal / run in terminal / add to project).
 3. **Web URL** (e.g. `google.com` or `https://example.com`) — opens in your browser.
 4. **`other_custom_commands` match** — passes the text to whatever shell command you've configured.
 5. **Fallback** — show the modify-or-search panel, populated from `web_searchers`.
@@ -97,6 +109,8 @@ Paths can be **absolute**, **relative to the current file**, or **relative to th
 | **Open URL: Copy Deep Link** | <kbd>ctrl+alt+shift+u</kbd> | <kbd>ctrl+alt+shift+d</kbd> |
 | **Open URL: Copy Transformed Path** | <kbd>ctrl+alt+shift+c</kbd> | <kbd>ctrl+alt+shift+c</kbd> |
 | **Open URL: Paste Relative Path** | <kbd>ctrl+alt+v</kbd> | <kbd>ctrl+alt+v</kbd> |
+| **Open URL: System Open this File** | <kbd>ctrl+alt+o</kbd> | <kbd>ctrl+alt+shift+o</kbd> |
+| **Open URL: Run in Terminal** | *(disabled — see [Run in Terminal](#run-in-terminal))* | *(disabled)* |
 | **Open URL: Skip Menu** | (palette only) | — |
 | **Open URL: Use Input** | (palette only) | — |
 
@@ -224,8 +238,36 @@ Sometimes the right action is in-process (no subprocess). Use one of these reser
 | `"open_in_new_window"` | Open the path in a new Sublime window using the running ST instance. (On macOS this dispatches via the bundled `subl` binary so project events fire reliably for plugins like AutoOpenNotes.) |
 | `"system_open"` | Hand off to the OS — `open` on macOS, `xdg-open` on Linux, `cmd /c start` on Windows. |
 | `"add_to_project"` | Append the folder to the current Sublime window's project. |
+| `"run_in_terminal"` | Open a terminal window with its cwd at the path — the folder itself, or a file's containing folder. Nothing is executed; you land in an interactive shell. See [Run in Terminal](#run-in-terminal). |
 
-The shipped defaults use these for **edit** (synthesized at runtime), **reveal**, **new window**, **system open**, and **add to project**.
+The shipped defaults use these for **edit** (synthesized at runtime), **reveal**, **new window**, **run in terminal**, **system open**, and **add to project**.
+
+### Run in Terminal
+
+> **Currently disabled** (2026-09-02). The palette entry and both menu actions are unhooked
+> because the new iTerm window comes up empty when Sublime is the caller — see
+> [`docs/lessons.md`](docs/lessons.md). The code and settings below are intact; re-adding the two
+> entry points turns it back on.
+
+**Open URL: Run in Terminal** opens a terminal window in the folder of the file you're editing — the terminal-side sibling of [System Open this File](#system-open-this-file), no cursor target needed. The same thing is available as a **run in terminal** action in both the file and folder menus, for a path under the cursor. Nothing is executed either way: you land in an interactive shell at that folder, ready to type.
+
+(To *run* a script in a terminal instead, use a custom command with the [`terminal`](#custom-commands) field.)
+
+With `terminal_app` unset the OS default terminal is used:
+
+- **macOS** — the command is staged in a throwaway `.command` launcher and handed to `open`, so whichever app claims shell scripts takes it (check yours with `duti -x command`). That app decides window vs. tab.
+- **Linux** — the `x-terminal-emulator` alternatives symlink, falling back to `xterm`.
+- **Windows** — a new `cmd.exe` window (`start cmd /k`).
+
+Set `terminal_app` to pick the app explicitly:
+
+```json
+"terminal_app": "iTerm"
+```
+
+On macOS, `"iTerm"` and `"Terminal"` are driven via AppleScript, which **guarantees a new window** (plain `open` gives iTerm a tab, since iTerm honors its own preference). Any other value — an app name or an `.app` path — goes to `open -a`. On Linux it's the emulator binary, e.g. `"gnome-terminal"`.
+
+The launcher is handed to iTerm as the new session's `command`, never typed in with `write text`: writing text into a just-created session races the shell's startup, and on a cold iTerm the line lands at the prompt without ever running. One caveat outside our control — a **cold Terminal.app** also opens its own window at launch, so you briefly get two windows; iTerm doesn't.
 
 ## `autoactions` — pre-select an action by file type
 
@@ -293,6 +335,23 @@ If you set `copy_path_transform` to a shell command, **Open URL: Copy Transforme
 
 The **Copy Transformed Path** palette entry is hidden when `copy_path_transform` is unset, so it doesn't clutter the palette unless you've configured it.
 
+### Wrapping copied paths
+
+`copy_path_wrap_char` (default `` ` ``) is the copy-side mirror of `plain_text_path_wrap_char` — same rules, applied when the link is put on the clipboard rather than when it's pasted. So `~/notes.txt:42:/^first five words/` gets copied as `` `~/notes.txt:42:/^first five words/` ``, and lands as one re-selectable token wherever you paste it, not just via **Paste Relative Path**.
+
+- A deep link (`:42`, `:"text"`, `:/regex/`) is always enclosed.
+- A plain path (from **Copy Transformed Path**) is enclosed only when it contains a space or another char that would break token re-selection.
+- If the wrap char already appears in the path, the next available quote (`"`, `'`, `` ` ``) is used.
+- Set it to `""` to copy bare, as before.
+
+**Paste Relative Path** strips one enclosing pair off the clipboard, so a wrapped link round-trips without doubling up.
+
+## System Open this File
+
+**Open URL: System Open this File** hands the file in the active view to the OS default opener — `open` on macOS, `xdg-open` on Linux, `cmd /c start` on Windows. It's the `system_open` menu action, but targeting the file you're editing rather than a path under the cursor, so there's nothing to select first. Handy for previewing a markdown file, HTML page, image, or CSV in its registered app.
+
+The command is disabled for unsaved buffers, since there's no path to hand off.
+
 ## Paste Relative Path
 
 **Open URL: Paste Relative Path** turns a clipboard path into the shortest of:
@@ -306,8 +365,9 @@ Behavior:
 - Web URLs (containing `://`) are pasted as-is.
 - `file://...` URIs are stripped first.
 - Deep-link suffixes (`:42`, `:/regex/`, etc.) are preserved.
+- One enclosing pair of quotes or brackets around the clipboard text is stripped first, so a link copied with `copy_path_wrap_char` doesn't get double-wrapped.
 - In Markdown views, the result is wrapped in backticks (controlled by `paste_relative_path_markdown_backticks`).
-- In non-Markdown views, results containing chars that would break re-selection (spaces, apostrophes, brackets, angle brackets, commas) are wrapped in a quote — `"`, else `'`, else `` ` `` — so the pasted link re-selects as one token.
+- In non-Markdown views (`.txt`, plain text, code), the result is wrapped in `` ` `` — the `plain_text_path_wrap_char` setting — when it contains chars that would break re-selection (spaces, apostrophes, brackets, angle brackets, commas) or carries a deep-link suffix, so the pasted link re-selects as one token. If that char already appears in the path, the next available quote (`"`, `'`, `` ` ``) is used. Set the setting to `""` to only wrap on re-selection-breaking chars, with `"` preferred.
 
 ## Settings reference
 
@@ -324,13 +384,16 @@ Open with **Preferences → Package Settings → Open URL → Settings**.
 | `search_paths` | `["src"]` | Directory roots tried as prefixes. |
 | `file_prefixes` | `[]` | Prefixes added to the basename. |
 | `file_suffixes` | `[".js"]` | Extensions tried on bare names. |
-| `file_custom_commands` | (5 entries) | Action menu for files. |
-| `folder_custom_commands` | (5 entries) | Action menu for folders. |
+| `file_custom_commands` | (6 entries) | Action menu for files. |
+| `folder_custom_commands` | (6 entries) | Action menu for folders. |
 | `other_custom_commands` | `[]` | Action menu for non-file/non-folder text. |
 | `autoactions` | (4 entries) | Per-extension auto-action rules. |
 | `deep_link_line_number_only` | `false` | When true, deep links are line numbers only (no `:"text"` or `:/regex/`). |
 | `copy_path_transform` | `""` | Shell command for transforming file paths in Copy Deep Link / Copy Transformed Path. |
 | `paste_relative_path_markdown_backticks` | `true` | Wrap pasted paths in backticks in Markdown views. |
+| `plain_text_path_wrap_char` | `` "`" `` | Char enclosing a pasted path in non-Markdown views when it has a space (or other re-selection breaker) or a deep-link suffix. `""` = old behavior (quote only on breaking chars). |
+| `copy_path_wrap_char` | `` "`" `` | Char enclosing a path or deep link copied by **Copy Deep Link** / **Copy Transformed Path**. Deep links always; plain paths only on re-selection-breaking chars. `""` = copy bare. |
+| `terminal_app` | `""` | Terminal app for **Run in Terminal** and the **run in terminal** action. Empty = the OS default terminal. |
 
 ### Project-specific settings
 

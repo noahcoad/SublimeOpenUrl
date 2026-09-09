@@ -78,9 +78,25 @@ selection_cases:
   - {label: md-link-second-of-two, text: "[a](one.txt) and [b](two.txt)", cursor: 19, expected: "two.txt"}
   - {label: md-link-outside-after, text: "[a](one.txt) and google.com", cursor: 20, expected: "google.com"}
   - {label: md-link-empty-target, text: "[a]() and google.com", cursor: 1, expected: "a"}
+  # <!-- --> is a comment marker, not an angle pair, so a URL inside it still resolves
+  - {label: html-comment-url, text: "<!-- published at https://sh.ncoad.com/sh/drj7heew -->", cursor: 31,
+     expected: "https://sh.ncoad.com/sh/drj7heew"}
+  - {label: html-comment-url-start, text: "<!-- published at https://sh.ncoad.com/sh/drj7heew -->", cursor: 18,
+     expected: "https://sh.ncoad.com/sh/drj7heew"}
+  - {label: html-comment-path, text: "<!-- see ~/txt/notes.txt -->", cursor: 12, expected: "~/txt/notes.txt"}
+  - {label: html-comment-quoted-spacey-path, text: "<!-- see '~/a b/c.txt' -->", cursor: 12, expected: "~/a b/c.txt"}
   # a pair that opens and closes before the cursor is not an enclosing pair
   - {label: md-checkbox,       text: "- [ ] visit google.com now", cursor: 15, expected: "google.com"}
   - {label: unmatched-opener,  text: "(notes.txt and more", cursor: 3,  expected: "notes.txt"}
+  # quotes wrapping a path *and* prose: the whole doesn't resolve, so the token under
+  # the cursor wins — but only when it really resolves (/etc/hosts exists everywhere)
+  - {label: annotated-quoted-path, text: '  - "/etc/hosts — the hosts file"', cursor: 8, expected: "/etc/hosts"}
+  - {label: annotated-quoted-path-deeplink, text: '  - "/etc/hosts:3 — the hosts file"', cursor: 8,
+     expected: "/etc/hosts:3"}
+  - {label: annotated-quoted-cursor-in-prose, text: '  - "/etc/hosts — the hosts file"', cursor: 20,
+     expected: "/etc/hosts — the hosts file"}
+  - {label: annotated-quoted-unresolvable, text: '  - "/etc/nope.txt — no such file"', cursor: 8,
+     expected: "/etc/nope.txt — no such file"}
 
   # cursor in surrounding text
   - {label: url-mid-sentence,   text: "boo google.com hoo",          cursor: 6, expected: "google.com"}
