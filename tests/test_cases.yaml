@@ -68,6 +68,9 @@ selection_cases:
      expected: "https://a.sharepoint.com/x?id=%2Fa%20b&v=1"}
   - {label: md-link-target-start, text: "[bits - OneDrive](https://a.sharepoint.com/x?id=%2Fa%20b&v=1)", cursor: 18,
      expected: "https://a.sharepoint.com/x?id=%2Fa%20b&v=1"}
+  # in-page anchor target of a TOC entry — resolved by find_heading_slug_row later
+  - {label: md-link-anchor,    text: "4. [Quick Product Guidance Needs](#quick-product-guidance-needs)", cursor: 49,
+     expected: "#quick-product-guidance-needs"}
   - {label: md-link-in-prose,   text: "read [my notes](~/txt/a b.txt) later", cursor: 8, expected: "~/txt/a b.txt"}
   - {label: md-link-angle-target, text: "see [docs](<~/txt/a b.txt>) here", cursor: 6, expected: "~/txt/a b.txt"}
   - {label: md-link-with-title, text: '[docs](~/txt/notes.txt "my title")', cursor: 3, expected: "~/txt/notes.txt"}
@@ -165,3 +168,46 @@ scan_line_cases:
   - {label: url-in-comment,         text: "# see https://example.com for docs",                                                                            expected: "https://example.com"}
   - {label: bare-domain-after-text, text: "visit google.com today",                                                                                        expected: "google.com"}
   - {label: url-mid-line,           text: "label: https://example.com more text",                                                                          expected: "https://example.com"}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# find_heading_slug_row cases — markdown in-page anchors (#slug -> heading row)
+# anchor: the '#slug' token under the cursor (quoted; '#' opens a YAML comment)
+# expected: 0-based row of the matching heading, or null when none matches
+# All cases run against heading_anchor_doc below.
+# ─────────────────────────────────────────────────────────────────────────────
+heading_anchor_doc: |
+  # Customer 3M — Agentic Vision
+
+  4. [Quick Product Guidance Needs](#quick-product-guidance-needs)
+
+  ## Overview
+
+  ## Quick Product Guidance Needs
+
+  ### Q&A: What's Next?
+
+  ```
+  ## Overview
+  ```
+
+  ## Overview
+
+  ## Custom Section {#legacy-id}
+
+  #hashtag is prose, not a heading
+  ## Deep `code` and **bold** ##
+
+heading_anchor_cases:
+  - {label: toc-target,             anchor: "#quick-product-guidance-needs", expected: 6}
+  - {label: title-em-dash,          anchor: "#customer-3m-agentic-vision",   expected: 0}
+  - {label: punctuation-dropped,    anchor: "#qa-whats-next",                expected: 8}
+  - {label: first-of-duplicates,    anchor: "#overview",                     expected: 4}
+  # 14, not 11 — the ## Overview inside the code fence isn't counted
+  - {label: second-of-duplicates,   anchor: "#overview-1",                   expected: 14}
+  - {label: explicit-anchor-wins,   anchor: "#legacy-id",                    expected: 16}
+  - {label: explicit-shadows-slug,  anchor: "#custom-section",               expected: null}
+  - {label: inline-markup-stripped, anchor: "#deep-code-and-bold",           expected: 19}
+  - {label: anchor-case-folded,     anchor: "#Quick-Product-Guidance-Needs",  expected: 6}
+  - {label: hashtag-is-not-heading,  anchor: "#hashtag",                     expected: null}
+  - {label: bare-hash,              anchor: "#",                             expected: null}
+  - {label: unknown-slug,           anchor: "#nope",                         expected: null}

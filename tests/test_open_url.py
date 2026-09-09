@@ -2604,6 +2604,73 @@ if "sublime" not in sys.modules:
 				open_url.run_in_terminal = saved
 			self.assertEqual(captured, [("/tmp/d", "")])
 
+	class TestHeadingAnchors(unittest.TestCase):
+		"""heading_slug() / find_heading_slug_row(): markdown '#slug' resolves to a heading row."""
+
+		def test_slug_matches_github_rules(self):
+			"""Lowercase, punctuation dropped, spaces to hyphens, underscores kept."""
+			self.assertEqual(open_url.heading_slug("Quick Product Guidance Needs"), "quick-product-guidance-needs")
+			self.assertEqual(open_url.heading_slug("Q&A: What's Next?"), "qa-whats-next")
+			self.assertEqual(open_url.heading_slug("A — B"), "a-b")
+			self.assertEqual(open_url.heading_slug("snake_case Name"), "snake_case-name")
+			self.assertEqual(open_url.heading_slug("`code` and **bold**"), "code-and-bold")
+			self.assertEqual(open_url.heading_slug("See [the docs](~/a.md)"), "see-the-docs")
+
+		def test_setext_headings_are_not_matched(self):
+			"""Only ATX ('#') headings are indexed."""
+			doc = "Overview\n--------\n"
+			self.assertIsNone(open_url.find_heading_slug_row(doc, "#overview"))
+
+		def test_closing_hashes_trimmed(self):
+			"""A '## Title ##' heading slugs off the title alone."""
+			self.assertEqual(open_url.find_heading_slug_row("## Title ##\n", "#title"), 0)
+
+		def test_yaml_cases(self):
+			"""Yaml cases."""
+			doc = _CASES.get("heading_anchor_doc", "")
+			for c in _CASES.get("heading_anchor_cases", []):
+				with self.subTest(c["label"]):
+					self.assertEqual(open_url.find_heading_slug_row(doc, c["anchor"]), c["expected"])
+
+		class _Sel(list):
+			"""The bits of sublime's selection collection goto_heading_anchor touches."""
+
+			def add(self, region):
+				"""Append ``region`` to the selection."""
+				self.append(region)
+
+		def _cmd(self, text):
+			"""An OpenUrlCommand over ``text``, with search dispatch captured instead of run."""
+			view = MockView(text)
+			view._window = MockWindow(project_data=None)
+			view._selections = self._Sel(view._selections)
+			view.centered = None
+			lines = text.split("\n")
+			view.text_point = lambda row, col: sum(len(l) + 1 for l in lines[:row]) + col
+			view.show_at_center = lambda point: setattr(view, "centered", point)
+			cmd = OpenUrlCommand(view)
+			cmd.config = dict(_DEFAULT_SETTINGS)
+			cmd.searched = []
+			cmd.modify_or_search_action = cmd.searched.append
+			return cmd, view
+
+		def test_handle_jumps_to_the_heading(self):
+			"""handle('#slug') moves the cursor to the heading row instead of searching."""
+			doc = _CASES.get("heading_anchor_doc", "")
+			cmd, view = self._cmd(doc)
+			cmd.handle("#quick-product-guidance-needs", show_menu=False)
+			expected = view.text_point(doc.split("\n").index("## Quick Product Guidance Needs"), 0)
+			self.assertEqual([r.begin() for r in view.sel()], [expected])
+			self.assertEqual(view.centered, expected)
+			self.assertEqual(cmd.searched, [])
+
+		def test_handle_falls_through_for_an_unmatched_hashtag(self):
+			"""A '#hashtag' with no matching heading still reaches the search action."""
+			cmd, view = self._cmd(_CASES.get("heading_anchor_doc", ""))
+			cmd.handle("#hashtag", show_menu=False)
+			self.assertIsNone(view.centered)
+			self.assertEqual(cmd.searched, ["#hashtag"])
+
 
 if __name__ == "__main__":
 	unittest.main(verbosity=2)

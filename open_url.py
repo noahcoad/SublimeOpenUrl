@@ -13,6 +13,7 @@ Module entry points:
 	OpenUrlCommand.run / handle  — the resolution cascade (file -> folder -> web URL -> custom -> search)
 	parse_file_location          — splits ``path:LINE`` / ``:"text"`` / ``:/regex/`` / ``:N-M`` deep links
 	find_deep_link_span          — locates a deep-link token (spaces/quotes and all) under the cursor
+	find_heading_slug_row        — resolves a markdown ``#anchor`` to the heading row it names
 	ENCLOSING_PAIRS              — the matched delimiter pairs that let a spaced path select whole
 	apply_path_transform         — runs the ``copy_path_transform`` shell command
 	select_default_opener        — autoaction matcher for ``file_custom_commands`` / ``folder_custom_commands``
@@ -402,6 +403,59 @@ def find_markdown_link_span(line: str, col: int) -> tuple[int, int] | None:
 	return None
 
 
+# An ATX heading, its trailing closing ``###`` marks, and the ``{#custom-id}`` explicit
+# anchor GFM/Pandoc honor. The ``\s+`` after the hashes is what keeps a bare ``#hashtag``
+# line out of the heading table.
+_HEADING_RE = re.compile(r"^(#{1,6})\s+(.*?)\s*#*\s*$")
+_EXPLICIT_ANCHOR_RE = re.compile(r"\{#([^}]+)\}\s*$")
+_FENCE_RE = re.compile(r"^\s*(?:```|~~~)")
+
+
+def heading_slug(text: str) -> str:
+	"""GitHub-style anchor slug for heading ``text`` (already stripped of its ``#`` marks).
+
+	Mirrors GFM: inline markdown is unwrapped, punctuation dropped, spaces collapsed to
+	hyphens, everything lowercased. Duplicate slugs are numbered by the caller.
+	"""
+	s = re.sub(r"\[([^\]]*)\]\([^)]*\)", r"\1", text)  # [label](target) -> label
+	s = re.sub(r"<[^>]+>", "", s)  # inline html
+	s = s.replace("`", "").replace("*", "")  # code spans and emphasis markers
+	s = _EXPLICIT_ANCHOR_RE.sub("", s).lower()
+	s = re.sub(r"[^\w\s-]", "", s, flags=re.UNICODE)  # \w keeps '_', which GFM keeps too
+	return re.sub(r"\s+", "-", s.strip())
+
+
+def find_heading_slug_row(text: str, anchor: str) -> int | None:
+	"""0-based row of the heading in ``text`` whose anchor matches ``anchor`` (``#slug``).
+
+	Headings inside fenced code blocks are skipped, an explicit ``{#id}`` wins over the
+	derived slug, and repeats of a slug take GitHub's ``-1``/``-2`` suffixes. Returns
+	None when nothing matches, so the caller can fall back to its normal handling.
+	"""
+	want = anchor.lstrip("#").strip().lower()
+	if not want: return None
+	seen: dict[str, int] = {}
+	in_fence = False
+	for row, line in enumerate(text.split("\n")):
+		if _FENCE_RE.match(line):
+			in_fence = not in_fence
+			continue
+		if in_fence: continue
+		match = _HEADING_RE.match(line)
+		if not match: continue
+		body = match.group(2)
+		explicit = _EXPLICIT_ANCHOR_RE.search(body)
+		if explicit:
+			if explicit.group(1).strip().lower() == want: return row
+			continue
+		base = heading_slug(body)
+		if not base: continue
+		n = seen.get(base, 0)
+		seen[base] = n + 1
+		if (base if n == 0 else "%s-%d" % (base, n)) == want: return row
+	return None
+
+
 # A scheme URL, matched as a unit so a comma inside a query string doesn't end it.
 # Body stops at whitespace and at the quote/angle/square/curly delimiters, so a
 # wrapped URL still comes out bare; parens are allowed but balanced below, since
@@ -765,6 +819,12 @@ class OpenUrlCommand(sublime_plugin.TextCommand):
 
 	def handle(self, url: str, show_menu: bool) -> None:
 		"""Apply transforms to ``url`` and dispatch: file action, folder action, web URL, custom command, or search."""
+		# A bare ``#slug`` is a markdown in-page anchor — the target of a TOC entry like
+		# ``4. [Quick Product Guidance Needs](#quick-product-guidance-needs)`` — so jump to
+		# that heading in this view. Only when a heading actually matches, leaving a plain
+		# ``#hashtag`` to fall through to the usual cascade.
+		if url.startswith("#") and self.goto_heading_anchor(url):
+			return
 		url = resolve_aliases(url, self.config["aliases"])
 		urls = generate_urls(
 			url,
@@ -1057,6 +1117,21 @@ class OpenUrlCommand(sublime_plugin.TextCommand):
 			return
 		view = window.open_file(path)
 		self._navigate_when_loaded(view, location)
+
+	def goto_heading_anchor(self, anchor: str) -> bool:
+		"""Move the cursor to the heading in this view matching the ``#slug`` ``anchor``.
+
+		Returns False when no heading matches, so ``handle`` can carry on as before.
+		"""
+		view = self.view
+		anchor = remove_trailing_delimiters(anchor, self.config["trailing_delimiters"])
+		row = find_heading_slug_row(view.substr(sublime.Region(0, view.size())), anchor)
+		if row is None: return False
+		target = view.text_point(row, 0)
+		view.sel().clear()
+		view.sel().add(sublime.Region(target))
+		view.show_at_center(target)
+		return True
 
 	def _navigate_when_loaded(self, view, location: dict) -> None:
 		"""Poll until ``view`` finishes loading, then dispatch to ``_navigate_in_view``."""

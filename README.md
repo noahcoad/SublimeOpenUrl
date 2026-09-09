@@ -88,6 +88,22 @@ Details:
 - A link with an empty target (`[a]()`) falls back to normal expansion, so the label is what resolves.
 - Reference-style links (`[a][b]`) aren't followed — only inline `[label](target)`.
 
+### In-page anchors (`#heading`)
+
+A target that's a bare `#slug` — a table-of-contents entry pointing at a heading in the same file — jumps the cursor to that heading and centers it:
+
+```
+4. [Quick Product Guidance Needs](#quick-product-guidance-needs)
+```
+
+Details:
+
+- Slugs follow GitHub's rules: lowercased, inline markdown unwrapped, punctuation dropped, spaces to hyphens. `## Q&A: What's Next?` → `#qa-whats-next`.
+- Repeated headings take GitHub's `-1` / `-2` suffixes, so `#overview-1` lands on the second `## Overview`.
+- An explicit `{#custom-id}` on the heading wins over the derived slug.
+- Headings inside fenced code blocks are ignored.
+- When no heading matches, the token falls through to the normal cascade — so a plain `#hashtag` in prose still web-searches as before.
+
 ### URLs with a scheme
 
 A `scheme://...` URL is matched as one unit from any cursor position inside it, so a **comma in a query string no longer truncates it**:
