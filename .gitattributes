@@ -1,0 +1,13 @@
+# Keep dev-only files out of the archive Package Control installs from.
+# PC downloads the tag zipball from codeload, which honors export-ignore, so
+# these never reach a user's Packages folder. Verify with:
+#   git archive --format=tar 3.1.0 | tar -t
+#
+# .python-version must NOT be listed here — Package Control reads it from the
+# installed package to pick the ST4 plugin interpreter.
+tests/          export-ignore
+docs/           export-ignore
+.github/        export-ignore
+CODEOWNERS      export-ignore
+.gitignore      export-ignore
+.gitattributes  export-ignore
