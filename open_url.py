@@ -386,21 +386,60 @@ def find_markdown_link_span(line: str, col: int) -> tuple[int, int] | None:
 	are all trimmed off. Returns None when the link has no target (``[a]()``).
 	"""
 	for match in _MD_LINK_RE.finditer(line):
-		if not match.start() <= col <= match.end():
-			continue
-		inner = match.group("inner")
-		title = _MD_TITLE_RE.search(inner)
-		if title:
-			inner = inner[: title.start()]
-		target = inner.strip()
-		if not target:
-			return None
-		start = match.start("inner") + len(inner) - len(inner.lstrip())
-		end = start + len(target)
-		if len(target) > 2 and target[0] == "<" and target[-1] == ">":
-			return (start + 1, end - 1)
-		return (start, end)
+		if match.start() <= col <= match.end():
+			return _md_link_target_span(match)
 	return None
+
+
+def find_next_markdown_link_span(line: str, col: int) -> tuple[int, int] | None:
+	"""Span of the target of the first inline markdown link *starting at or after* ``col``.
+
+	Powers the line-start scan: a cursor in the leading indent or bullet of a list item
+	like ``1. [Leader's Priorities](#leaders-priorities)`` has nothing under it worth
+	opening, so look rightward for the first link on the line. Links with an empty
+	target are skipped rather than ending the search.
+	"""
+	for match in _MD_LINK_RE.finditer(line):
+		if match.start() < col:
+			continue
+		span = _md_link_target_span(match)
+		if span is not None:
+			return span
+	return None
+
+
+def _md_link_target_span(match: "re.Match") -> tuple[int, int] | None:
+	"""Span of the target inside an ``_MD_LINK_RE`` match, or None when the target is empty.
+
+	Trims a trailing ``"title"``, surrounding whitespace, and an angle wrapper
+	(``<my file.txt>``).
+	"""
+	inner = match.group("inner")
+	title = _MD_TITLE_RE.search(inner)
+	if title:
+		inner = inner[: title.start()]
+	target = inner.strip()
+	if not target:
+		return None
+	start = match.start("inner") + len(inner) - len(inner.lstrip())
+	end = start + len(target)
+	if len(target) > 2 and target[0] == "<" and target[-1] == ">":
+		return (start + 1, end - 1)
+	return (start, end)
+
+
+# Everything a cursor can sit in ahead of a list item's content: indent, blockquote
+# marks, and an optional ``-``/``*``/``+`` bullet or ``1.``/``1)`` number.
+_LIST_LEAD_IN_RE = re.compile(r"^[\s>]*(?:[-*+]|\d+[.)])?\s*$")
+
+
+def is_list_lead_in(text: str) -> bool:
+	"""True when ``text`` (everything left of the cursor on its line) is only lead-in.
+
+	A cursor in a bullet's indent or on the marker itself has no token under it worth
+	opening, so it's treated like a line-start cursor and triggers the rightward scan.
+	"""
+	return bool(_LIST_LEAD_IN_RE.match(text))
 
 
 # An ATX heading, its trailing closing ``###`` marks, and the ``{#custom-id}`` explicit
@@ -792,9 +831,12 @@ class OpenUrlCommand(sublime_plugin.TextCommand):
 				urls = [self.view.substr(self.find_selection(region)).strip() for region in sels]
 			else:
 				# Single empty cursor or single-line selection — apply line-start scan heuristic.
+				# A cursor in a bullet's indent or on its marker counts as line-start too:
+				# there's no token under it, so scan the item's content to its right.
 				sel0 = sels[0]
-				cursor_at_line_start = sel0.empty() and bool(
-					self.view.classify(sel0.begin()) & sublime.CLASS_LINE_START
+				lead_in = self.view.substr(sublime.Region(self.view.line(sel0.begin()).begin(), sel0.begin()))
+				cursor_at_line_start = sel0.empty() and (
+					bool(self.view.classify(sel0.begin()) & sublime.CLASS_LINE_START) or is_list_lead_in(lead_in)
 				)
 				u = self.view.substr(self.find_selection(sel0)).strip()
 				if cursor_at_line_start and not self._is_resolvable(u):
@@ -1074,10 +1116,19 @@ class OpenUrlCommand(sublime_plugin.TextCommand):
 		return raw if self._is_resolvable(raw) or looks_like_path(raw) else ""
 
 	def _scan_line_for_url(self, pos: int) -> str | None:
-		"""Scan rightward from pos to end of line, return first resolvable token."""
+		"""Scan rightward from pos to end of line, return first resolvable token.
+
+		An inline markdown link wins over the token walk, since its target is explicit
+		and often unwalkable — a label with spaces (``[my notes](~/a b.txt)``) or an
+		in-page anchor (``[Leader's Priorities](#leaders-priorities)``) splits into
+		tokens that resolve as nothing.
+		"""
 		line = self.view.line(pos)
 		line_text = self.view.substr(line)
 		col = pos - line.begin()
+		span = find_next_markdown_link_span(line_text, col)
+		if span is not None:
+			return line_text[span[0] : span[1]]
 		rest = line_text[col:]
 		for token in re.split(r"\s+", rest):
 			if not token:

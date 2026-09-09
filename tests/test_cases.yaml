@@ -157,8 +157,9 @@ loc_sep_cases:
 
 # ─────────────────────────────────────────────────────────────────────────────
 # _scan_line_for_url cases
-# text: full line content (cursor assumed at position 0)
-# expected: first URL/file token found, or null if nothing found
+# text: full line content
+# col: cursor column to scan rightward from (default 0)
+# expected: first markdown link target or URL/file token found, or null if nothing found
 # ─────────────────────────────────────────────────────────────────────────────
 scan_line_cases:
   - {label: url-after-label,        text: "Dream Analysis, https://claude.ai/chat/381fa171-e701-4f2d-9f89-1bb90cbb1607",                                  expected: "https://claude.ai/chat/381fa171-e701-4f2d-9f89-1bb90cbb1607"}
@@ -168,6 +169,16 @@ scan_line_cases:
   - {label: url-in-comment,         text: "# see https://example.com for docs",                                                                            expected: "https://example.com"}
   - {label: bare-domain-after-text, text: "visit google.com today",                                                                                        expected: "google.com"}
   - {label: url-mid-line,           text: "label: https://example.com more text",                                                                          expected: "https://example.com"}
+  # a markdown link on the line wins over the whitespace-token walk, which can't
+  # resolve a label with spaces or an in-page #anchor
+  - {label: md-anchor-after-number,  text: "1. [Leader's Priorities](#leaders-priorities)",       expected: "#leaders-priorities"}
+  - {label: md-anchor-after-bullet,  text: "    - [Leader's Priorities](#leaders-priorities)",    expected: "#leaders-priorities"}
+  - {label: md-anchor-on-marker,     text: "    - [Leader's Priorities](#leaders-priorities)",    col: 4, expected: "#leaders-priorities"}
+  - {label: md-spaced-path-bullet,   text: "- [my notes](~/txt/a b.txt)",                         expected: "~/txt/a b.txt"}
+  - {label: md-link-beats-later-url, text: "- [notes](#notes) and https://example.com",           expected: "#notes"}
+  - {label: md-checkbox-not-a-link,  text: "- [ ] visit google.com",                              expected: "google.com"}
+  - {label: md-empty-target-skipped, text: "- [a]() then https://example.com",                    expected: "https://example.com"}
+  - {label: md-link-left-of-cursor,  text: "- [a](#a) and [b](#b)",                               col: 12, expected: "#b"}
 
 # ─────────────────────────────────────────────────────────────────────────────
 # find_heading_slug_row cases — markdown in-page anchors (#slug -> heading row)

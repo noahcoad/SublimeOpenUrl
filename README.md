@@ -104,6 +104,24 @@ Details:
 - Headings inside fenced code blocks are ignored.
 - When no heading matches, the token falls through to the normal cascade — so a plain `#hashtag` in prose still web-searches as before.
 
+### Cursor at the start of a line, or on a bullet
+
+With nothing under the cursor worth opening, Open URL scans rightward and takes the first thing on the line — a markdown link if there is one, otherwise the first resolvable token:
+
+```
+1. [Leader's Priorities](#leaders-priorities)
+    - [Leader's Priorities](#leaders-priorities)
+- [my notes](~/txt/a b.txt)
+Dream Analysis, https://claude.ai/chat/381fa171
+```
+
+Details:
+
+- "Start of a line" includes a cursor sitting in the leading indent, on a `-` / `*` / `+` bullet, on a `1.` / `1)` number, or after a `>` blockquote mark — anywhere in the item's lead-in.
+- A markdown link wins over the token walk, since its target is explicit and often unwalkable: a label with spaces or an in-page `#anchor` splits into tokens that resolve as nothing.
+- The scan only kicks in when the token actually under the cursor doesn't resolve, so a bullet whose marker is itself a path (rare, but) is untouched.
+- A `- [ ] todo` checkbox isn't a link (no parens), so `- [ ] visit google.com` still opens `google.com`.
+
 ### URLs with a scheme
 
 A `scheme://...` URL is matched as one unit from any cursor position inside it, so a **comma in a query string no longer truncates it**:

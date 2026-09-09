@@ -999,6 +999,25 @@ if "sublime" not in sys.modules:
 			"""Empty line."""
 			self.assertIsNone(self._scan(""))
 
+		def test_yaml_cases(self):
+			"""Yaml cases."""
+			for c in _CASES.get("scan_line_cases", []):
+				with self.subTest(c["label"]):
+					self.assertEqual(self._scan(c["text"], c.get("col", 0)), c["expected"])
+
+	class TestListLeadIn(unittest.TestCase):
+		"""is_list_lead_in(): a cursor in a bullet's indent/marker counts as line-start."""
+
+		def test_lead_in_forms(self):
+			"""Indent, bullets, numbers, and blockquote marks are all lead-in."""
+			for text in ["", "   ", "- ", "-", "    - ", "* ", "+ ", "1. ", "12)", "> ", "> - ", "\t\t- "]:
+				self.assertTrue(open_url.is_list_lead_in(text), repr(text))
+
+		def test_content_is_not_lead_in(self):
+			"""Anything past the marker means there's a token under the cursor."""
+			for text in ["- [Lea", "1. [a](", "see ", "- a ", "#", "-- "]:
+				self.assertFalse(open_url.is_list_lead_in(text), repr(text))
+
 	# =====================================================================
 	# find_selection, selection, sibling commands
 	# =====================================================================
@@ -2639,10 +2658,11 @@ if "sublime" not in sys.modules:
 				"""Append ``region`` to the selection."""
 				self.append(region)
 
-		def _cmd(self, text):
+		def _cmd(self, text, cursor=0):
 			"""An OpenUrlCommand over ``text``, with search dispatch captured instead of run."""
 			view = MockView(text)
 			view._window = MockWindow(project_data=None)
+			view.set_cursor(cursor)
 			view._selections = self._Sel(view._selections)
 			view.centered = None
 			lines = text.split("\n")
@@ -2663,6 +2683,20 @@ if "sublime" not in sys.modules:
 			self.assertEqual([r.begin() for r in view.sel()], [expected])
 			self.assertEqual(view.centered, expected)
 			self.assertEqual(cmd.searched, [])
+
+		def test_run_from_a_toc_bullets_lead_in(self):
+			"""Cursor in the indent or on the marker of a TOC bullet opens its anchor."""
+			doc = _CASES.get("heading_anchor_doc", "")
+			lines = doc.split("\n")
+			toc_row = lines.index("4. [Quick Product Guidance Needs](#quick-product-guidance-needs)")
+			heading_row = lines.index("## Quick Product Guidance Needs")
+			line_begin = sum(len(l) + 1 for l in lines[:toc_row])
+			for col in (0, 2, 3):  # start of line, after "4.", after "4. "
+				cmd, view = self._cmd(doc, cursor=line_begin + col)
+				cmd.run()
+				expected = view.text_point(heading_row, 0)
+				self.assertEqual([r.begin() for r in view.sel()], [expected], "col %d" % col)
+				self.assertEqual(cmd.searched, [], "col %d" % col)
 
 		def test_handle_falls_through_for_an_unmatched_hashtag(self):
 			"""A '#hashtag' with no matching heading still reaches the search action."""
