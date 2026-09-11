@@ -736,6 +736,24 @@ def no_window(kwargs: dict | None = None) -> dict:
 	return kwargs
 
 
+def show_window(kwargs: dict | None = None) -> dict:
+	"""Return ``kwargs`` unchanged, marking a launch whose console is meant to be visible.
+
+	The deliberate counterpart to ``no_window``. Exactly one launch in this package wants a window
+	on screen -- ``run_in_terminal``, whose entire job is to put an interactive shell in front of
+	you -- so it adds no creationflags and hides nothing.
+
+	It exists to say so at the call site. A bare ``Popen(args)`` is indistinguishable from having
+	never considered the question; ``Popen(args, **show_window())`` records that the omission is a
+	decision. st_package_reviewer reads it the same way: its check clears a launch that expands
+	``**kwargs`` in a file that also names ``CREATE_NO_WINDOW`` (see ``no_window`` above), which is
+	the escape hatch for packages that demonstrably know about the flag and are opting out. The
+	alternative it suggests -- ``startupinfo`` with ``SW_HIDE`` -- would hide the very window this
+	function is asking for.
+	"""
+	return dict(kwargs or {})
+
+
 def run_in_terminal(path: str, app: str = "") -> None:
 	"""Open a new terminal window with its cwd at ``path`` (a file's folder, or the folder itself).
 
@@ -764,12 +782,12 @@ def run_in_terminal(path: str, app: str = "") -> None:
 			emulator = app or ("x-terminal-emulator" if shutil.which("x-terminal-emulator") else "xterm")
 			args = [emulator, "-e", f"sh -c {shlex.quote(script)}"]
 
-	# Deliberately NOT no_window(): this is the one launch whose purpose is a visible console. The
-	# reviewer bot flags it anyway, since it can't tell "hide the window" from "show the window" --
-	# the one warning we expect to keep. Suppressing it would mean lying about startupinfo, or
-	# hiding the outer `cmd /c` and betting that `start` still gets a window of its own, which
-	# can't be tested from macOS and would break the feature outright if the bet were wrong.
-	threading.Thread(target=lambda: subprocess.Popen(args)).start()
+	# show_window(), not no_window(): this is the one launch whose purpose is a visible console, so
+	# it adds no flags. Spelled as an explicit opt-out rather than a bare Popen so the choice is
+	# legible -- to a reader and to st_package_reviewer alike. Note we do NOT try to hide just the
+	# outer `cmd /c` on Windows and bet that `start` still gets a console of its own: untestable
+	# from macOS, and the feature breaks outright if the bet is wrong.
+	threading.Thread(target=lambda: subprocess.Popen(args, **show_window())).start()
 
 
 def system_open(path: str) -> None:

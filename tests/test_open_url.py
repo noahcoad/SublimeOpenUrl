@@ -17,6 +17,7 @@ import os
 import re
 import sys
 import tempfile
+import threading
 import types
 import unittest
 
@@ -2622,6 +2623,75 @@ if "sublime" not in sys.modules:
 			finally:
 				open_url.run_in_terminal = saved
 			self.assertEqual(captured, [("/tmp/d", "")])
+
+	class TestWindowFlags(unittest.TestCase):
+		"""no_window() hides a child console on Windows; show_window() deliberately does not."""
+
+		def _with_platform(self, platform, fn):
+			"""Call fn() with sublime.platform() stubbed to platform.
+
+			Faking windows off windows also needs subprocess.CREATE_NO_WINDOW, which CPython only
+			defines on windows -- the reason no_window() keeps that reference inside its platform
+			branch. Added here for the duration of the call, then removed.
+			"""
+			saved = _mock_sublime.platform
+			_mock_sublime.platform = lambda: platform
+			added_flag = platform == "windows" and not hasattr(open_url.subprocess, "CREATE_NO_WINDOW")
+			if added_flag: open_url.subprocess.CREATE_NO_WINDOW = 0x08000000
+			try:
+				return fn()
+			finally:
+				_mock_sublime.platform = saved
+				if added_flag: del open_url.subprocess.CREATE_NO_WINDOW
+
+		def test_no_window_sets_create_no_window_on_windows(self):
+			"""No window sets create no window on windows."""
+			kwargs = self._with_platform("windows", open_url.no_window)
+			self.assertEqual(kwargs["creationflags"] & 0x08000000, 0x08000000)
+
+		def test_no_window_preserves_existing_kwargs_and_flags(self):
+			"""No window preserves existing kwargs and flags."""
+			kwargs = self._with_platform("windows", lambda: open_url.no_window({"cwd": "/tmp", "creationflags": 0x1}))
+			self.assertEqual(kwargs["cwd"], "/tmp")
+			self.assertEqual(kwargs["creationflags"], 0x1 | 0x08000000)
+
+		def test_no_window_is_a_noop_off_windows(self):
+			"""No window is a noop off windows."""
+			for platform in ("osx", "linux"):
+				self.assertNotIn("creationflags", self._with_platform(platform, open_url.no_window))
+
+		def test_show_window_never_adds_flags(self):
+			"""run_in_terminal wants a console on screen, so no platform may hide it."""
+			for platform in ("windows", "osx", "linux"):
+				kwargs = self._with_platform(platform, open_url.show_window)
+				self.assertNotIn("creationflags", kwargs)
+				self.assertNotIn("startupinfo", kwargs)
+
+		def test_show_window_passes_kwargs_through(self):
+			"""Show window passes kwargs through."""
+			self.assertEqual(self._with_platform("windows", lambda: open_url.show_window({"cwd": "/tmp"})), {"cwd": "/tmp"})
+
+		def test_run_in_terminal_launches_without_hiding_the_console(self):
+			"""Regression: the terminal launch must reach Popen with no window-hiding kwargs."""
+			captured = {}
+			launched = threading.Event()  # the launch is on a worker thread, so wait for it
+
+			class FakePopen:
+				def __init__(self, args, **kwargs):
+					"""Initialize."""
+					captured["args"] = args
+					captured["kwargs"] = kwargs
+					launched.set()
+
+			saved_popen = open_url.subprocess.Popen
+			open_url.subprocess.Popen = FakePopen
+			try:
+				self._with_platform("windows", lambda: open_url.run_in_terminal("/tmp/d/notes.md"))
+				self.assertTrue(launched.wait(5), "run_in_terminal never reached Popen")
+			finally:
+				open_url.subprocess.Popen = saved_popen
+			self.assertEqual(captured["kwargs"], {})
+			self.assertEqual(captured["args"][0], "cmd.exe")
 
 	class TestHeadingAnchors(unittest.TestCase):
 		"""heading_slug() / find_heading_slug_row(): markdown '#slug' resolves to a heading row."""
