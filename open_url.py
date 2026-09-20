@@ -7,7 +7,6 @@ Public commands (registered with Sublime Text):
 	copy_transformed_path  — copy the current file path through ``copy_path_transform``
 	paste_relative_path    — paste a clipboard path normalized to the shortest form
 	system_open_this_file  — hand the current file to the OS default opener
-	run_in_terminal        — open a terminal window in the current file's folder
 
 Module entry points:
 	OpenUrlCommand.run / handle  — the resolution cascade (file -> folder -> web URL -> custom -> search)
@@ -22,7 +21,7 @@ Settings live in ``open_url.sublime-settings`` (see README for the full list of 
 settings replace defaults entry-by-entry; project ``["settings"]["open_url"]`` overrides both.
 
 Sentinel command names (used in ``commands`` strings inside ``*_custom_commands``):
-	edit_in_sublime, open_in_new_window, system_open, add_to_project, run_in_terminal
+	edit_in_sublime, open_in_new_window, system_open, add_to_project
 These dispatch in-process via ``_run_builtin`` rather than spawning a subprocess.
 
 Repository: https://github.com/noahcoad/SublimeOpenUrl
@@ -33,9 +32,7 @@ from __future__ import annotations
 import os
 import re
 import shlex
-import shutil
 import subprocess
-import tempfile
 import threading
 import urllib.parse
 import webbrowser
@@ -68,7 +65,6 @@ Settings = TypedDict(
 		"plain_text_path_wrap_char": str,
 		"copy_path_wrap_char": str,
 		"autoactions": list,
-		"terminal_app": str,
 	},
 )
 
@@ -92,7 +88,6 @@ settings_keys = [
 	"plain_text_path_wrap_char",
 	"copy_path_wrap_char",
 	"autoactions",
-	"terminal_app",
 ]
 
 # Reserved built-in command names recognized when an opener's "commands" is a string.
@@ -104,7 +99,6 @@ BUILTIN_COMMANDS: frozenset[str] = frozenset(
 		"open_in_new_window",
 		"system_open",
 		"add_to_project",
-		"run_in_terminal",
 	}
 )
 
@@ -678,43 +672,6 @@ def _wrap_in_terminal(args, *, pause: bool) -> tuple[list, dict]:
 	return (args, {})
 
 
-def _terminal_launcher_script(folder: str) -> str:
-	"""Build the sh script the terminal window runs: cd to ``folder``, then hand over an interactive shell."""
-	return f"cd {shlex.quote(folder)}\nexec \"$SHELL\" -il\n"
-
-
-def _as_string(value: str) -> str:
-	"""Quote ``value`` as an AppleScript string literal (backslash and quote are the only escapes)."""
-	return '"%s"' % value.replace("\\", "\\\\").replace('"', '\\"')
-
-
-def _osx_terminal_args(launcher: str, app: str) -> list:
-	"""Args that open ``launcher`` (a .command file) in a macOS terminal.
-
-	``open`` alone respects the app's own window-vs-tab preference — iTerm typically
-	opens a tab — so for the two scriptable defaults we drive AppleScript instead and
-	get a guaranteed new window. Any other app falls back to ``open [-a app]``.
-
-	iTerm gets the launcher as the new session's ``command``, not as typed-in text:
-	``write text`` into a just-created session races the shell's startup, and on a cold
-	iTerm the line lands at the prompt without ever being run.
-	"""
-	name = os.path.basename(app).lower()
-	if name.endswith(".app"): name = name[:-4]  # str.removesuffix is 3.9+; ST runs Python 3.8
-	quoted = _as_string(launcher)
-	if name in ("iterm", "iterm2"):
-		script = (
-			'tell application "iTerm"\n'
-			"\tactivate\n"
-			f"\tcreate window with default profile command {quoted}\n"
-			"end tell"
-		)
-		return ["osascript", "-e", script]
-	if name == "terminal":
-		return ["osascript", "-e", 'tell application "Terminal" to activate', "-e", f'tell application "Terminal" to do script {quoted}']
-	return ["open", "-a", app, launcher] if app else ["open", launcher]
-
-
 def no_window(kwargs: dict | None = None) -> dict:
 	"""Return ``kwargs`` plus the creationflags that keep a child process off screen on Windows.
 
@@ -724,8 +681,6 @@ def no_window(kwargs: dict | None = None) -> dict:
 	and Linux, where a subprocess has no console of its own to hide -- and where the constant itself
 	doesn't exist, hence the reference living inside the platform branch.
 
-	Not applied blindly: run_in_terminal's whole job is to put a console on screen, so it opts out.
-
 	Spelled ``subprocess.CREATE_NO_WINDOW`` rather than the raw 0x08000000 on purpose.
 	st_package_reviewer's subprocess check accepts a ``**kwargs`` expansion at a call site only if
 	the same FILE also mentions the constant by name, so the literal read as unhandled to the bot.
@@ -734,60 +689,6 @@ def no_window(kwargs: dict | None = None) -> dict:
 	if sublime.platform() == "windows":
 		kwargs["creationflags"] = kwargs.get("creationflags", 0) | subprocess.CREATE_NO_WINDOW
 	return kwargs
-
-
-def show_window(kwargs: dict | None = None) -> dict:
-	"""Return ``kwargs`` unchanged, marking a launch whose console is meant to be visible.
-
-	The deliberate counterpart to ``no_window``. Exactly one launch in this package wants a window
-	on screen -- ``run_in_terminal``, whose entire job is to put an interactive shell in front of
-	you -- so it adds no creationflags and hides nothing.
-
-	It exists to say so at the call site. A bare ``Popen(args)`` is indistinguishable from having
-	never considered the question; ``Popen(args, **show_window())`` records that the omission is a
-	decision. st_package_reviewer reads it the same way: its check clears a launch that expands
-	``**kwargs`` in a file that also names ``CREATE_NO_WINDOW`` (see ``no_window`` above), which is
-	the escape hatch for packages that demonstrably know about the flag and are opting out. The
-	alternative it suggests -- ``startupinfo`` with ``SW_HIDE`` -- would hide the very window this
-	function is asking for.
-	"""
-	return dict(kwargs or {})
-
-
-def run_in_terminal(path: str, app: str = "") -> None:
-	"""Open a new terminal window with its cwd at ``path`` (a file's folder, or the folder itself).
-
-	Nothing is executed — you land in an interactive shell, ready to type. The
-	terminal is the ``terminal_app`` setting, else the OS default. On macOS the cd is
-	staged in a throwaway ``.command`` launcher; with no ``terminal_app`` that's
-	handed to ``open``, so whichever app claims shell scripts takes it (and decides
-	window vs. tab). On Linux, ``terminal_app`` overrides the ``x-terminal-emulator``
-	alternatives symlink, which falls back to xterm.
-	"""
-	platform = sublime.platform()
-	target = os.path.abspath(os.path.expanduser(path))
-	folder = target if os.path.isdir(target) else os.path.dirname(target)
-
-	if platform == "windows":
-		args = ["cmd.exe", "/c", "start", "", "cmd.exe", "/k", f'cd /d "{folder}"']
-	else:
-		script = _terminal_launcher_script(folder)
-		if platform == "osx":
-			launcher = os.path.join(tempfile.mkdtemp(prefix="open-url-"), "run-in-terminal.command")
-			with open(launcher, "w") as f:
-				f.write("#!/bin/sh\n" + script)
-			os.chmod(launcher, 0o755)
-			args = _osx_terminal_args(launcher, app)
-		else:
-			emulator = app or ("x-terminal-emulator" if shutil.which("x-terminal-emulator") else "xterm")
-			args = [emulator, "-e", f"sh -c {shlex.quote(script)}"]
-
-	# show_window(), not no_window(): this is the one launch whose purpose is a visible console, so
-	# it adds no flags. Spelled as an explicit opt-out rather than a bare Popen so the choice is
-	# legible -- to a reader and to st_package_reviewer alike. Note we do NOT try to hide just the
-	# outer `cmd /c` on Windows and bet that `start` still gets a console of its own: untestable
-	# from macOS, and the feature breaks outright if the bet is wrong.
-	threading.Thread(target=lambda: subprocess.Popen(args, **show_window())).start()
 
 
 def system_open(path: str) -> None:
@@ -1385,9 +1286,6 @@ class OpenUrlCommand(sublime_plugin.TextCommand):
 		if name == "add_to_project":
 			self._add_to_project(path)
 			return
-		if name == "run_in_terminal":
-			run_in_terminal(path, self.config.get("terminal_app") or "")
-			return
 
 	def _open_in_new_window(self, path: str) -> None:
 		"""Open ``path`` in a Sublime window using the running ST instance.
@@ -1805,28 +1703,6 @@ class SystemOpenThisFileCommand(sublime_plugin.TextCommand):
 		"""Only meaningful for a view backed by a file on disk."""
 		return bool(self.view and self.view.file_name())
 
-
-class RunInTerminalCommand(sublime_plugin.TextCommand):
-	"""Open a terminal window in the folder of the view's own file.
-
-	Sibling of System Open this File: same "act on the file I'm editing, no cursor
-	target needed" idea, but you land in a shell at that folder instead of handing
-	the file to its registered app. Terminal choice is the ``terminal_app`` setting.
-	"""
-
-	def run(self, edit=None) -> None:
-		"""Run ``run_in_terminal``: open a terminal at the current file's folder."""
-		file_path = self.view.file_name()
-		if not file_path:
-			sublime.status_message("File has no path")
-			return
-		folder = os.path.dirname(file_path)
-		run_in_terminal(folder, _settings_obj().get("terminal_app", "") or "")
-		sublime.status_message("Terminal: %s" % folder)
-
-	def is_enabled(self) -> bool:
-		"""Only meaningful for a view backed by a file on disk."""
-		return bool(self.view and self.view.file_name())
 
 
 def path_hop_count(path: str) -> int:

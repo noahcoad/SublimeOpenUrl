@@ -1,36 +1,25 @@
 # Lessons — open-url
 
-## PAUSED: Run in Terminal (2026-09-02)
+## REMOVED: Run in Terminal (2026-09-20, paused 2026-09-02)
 
-The action is **disabled** — code and tests are intact, but the entry points are unhooked:
+**Gone.** Paused 2026-09-02, removed outright 2026-09-20 — it never worked from Sublime and
+nobody asked for it back. Deleted: `run_in_terminal()`, `show_window()`, `_osx_terminal_args()`,
+`_terminal_launcher_script()`, `_as_string()`, `RunInTerminalCommand`, the `run_in_terminal`
+sentinel, the `terminal_app` setting, the README section, and 15 tests. Recover from git history
+if it's ever wanted.
 
-- `open_url.sublime-commands` — the `Open URL: Run in Terminal` palette entry was removed
-- `open_url.sublime-settings` — the `run in terminal` action is commented out in both
-  `file_custom_commands` and `folder_custom_commands`
+**Not** removed: the `terminal` / `pause` fields on custom commands (`_wrap_in_terminal`). That's
+a different feature — it *runs* a command in a terminal rather than opening an idle shell — and
+the README offers it as the replacement.
 
-Left in place: `run_in_terminal()`, `_osx_terminal_args()`, `_terminal_launcher_script()`,
-`_as_string()`, `RunInTerminalCommand`, the `run_in_terminal` sentinel in `BUILTIN_COMMANDS`,
-the `terminal_app` setting, and 12 tests. To resume, re-add the two entry points.
-
-**Symptom:** a new iTerm window opens but the launcher never runs — first an unexecuted path
+**Why it died.** A new iTerm window opened but the launcher never ran — first an unexecuted path
 sitting at the prompt, then (after switching from `write text` to `command`) an empty window.
-
-**What's ruled out:** stale module and wrong argv. Instrumenting `run_in_terminal` proved the
-current code ran with exactly the argv that works when pasted into a shell:
-
-```
-tag=v3-command app='iTerm' folder='/Users/ncoad/txt/sys'
-args=['osascript', '-e', 'tell application "iTerm"\n\tactivate\n\tcreate window with default profile command "…/run-in-terminal.command"\nend tell']
-```
-
-Same script + same launcher file → works from a shell, fails from Sublime. So the variable is
-**who the caller is**, not what's sent.
-
-**Next lead:** macOS Automation permission — Sublime Text needs to be allowed to control iTerm
-(System Settings → Privacy & Security → Automation → Sublime Text). A denied or half-granted
-grant can let `activate` through while the rest of the script dies. Check `tccutil`/the console
-for a `-1743` error, and try capturing osascript's stderr (the current code throws it away —
-`subprocess.Popen(args)` with no pipes; capture it before guessing again).
+Stale module and wrong argv were ruled out by instrumentation: the exact argv that works pasted
+into a shell failed when Sublime was the caller. So the variable was **who the caller is**, not
+what was sent. The untested lead was macOS Automation permission (System Settings → Privacy &
+Security → Automation → Sublime Text) — a half-granted TCC grant can let `activate` through while
+the rest of the AppleScript dies with `-1743`. Note for any future attempt: the old code threw
+osascript's stderr away, so capture it first.
 
 ## Run the test suite against Python 3.8 (2026-09-02)
 

@@ -8,7 +8,6 @@ Open files, folders, web URLs, and search queries from anywhere in Sublime Text 
 - **Copy Transformed Path** — copy the current file path through a user-supplied shell transform (clipboard normalizers, anonymizers, etc.).
 - **Paste Relative Path** — paste a clipboard path as the shortest of relative / `~/...` / absolute, with markdown backtick wrapping.
 - **System Open this File** — hand the file you're editing to the OS default opener, no cursor target needed.
-- **Run in Terminal** — open a terminal window in the folder of the file you're editing. *(Currently disabled — see [Run in Terminal](#run-in-terminal).)*
 
 ## Install
 
@@ -143,8 +142,8 @@ Details:
 
 After expanding the selection (using `delimiters`), Open URL tries the following in order. The first match wins.
 
-1. **File** — opens it in Sublime, or shows a menu (edit / reveal / new window / run in terminal / system open).
-2. **Folder** — shows a menu (new window / reveal / run in terminal / add to project).
+1. **File** — opens it in Sublime, or shows a menu (edit / reveal / new window / system open).
+2. **Folder** — shows a menu (new window / reveal / add to project).
 3. **Web URL** (e.g. `google.com` or `https://example.com`) — opens in your browser.
 4. **`other_custom_commands` match** — passes the text to whatever shell command you've configured.
 5. **Fallback** — show the modify-or-search panel, populated from `web_searchers`.
@@ -161,7 +160,6 @@ Paths can be **absolute**, **relative to the current file**, or **relative to th
 | **Open URL: Copy Transformed Path** | <kbd>ctrl+alt+shift+c</kbd> | <kbd>ctrl+alt+shift+c</kbd> |
 | **Open URL: Paste Relative Path** | <kbd>ctrl+alt+v</kbd> | <kbd>ctrl+alt+v</kbd> |
 | **Open URL: System Open this File** | <kbd>ctrl+alt+o</kbd> | <kbd>ctrl+alt+shift+o</kbd> |
-| **Open URL: Run in Terminal** | *(disabled — see [Run in Terminal](#run-in-terminal))* | *(disabled)* |
 | **Open URL: Skip Menu** | (palette only) | — |
 | **Open URL: Use Input** | (palette only) | — |
 
@@ -289,36 +287,8 @@ Sometimes the right action is in-process (no subprocess). Use one of these reser
 | `"open_in_new_window"` | Open the path in a new Sublime window using the running ST instance. (On macOS this dispatches via the bundled `subl` binary so project events fire reliably for plugins like AutoOpenNotes.) |
 | `"system_open"` | Hand off to the OS — `open` on macOS, `xdg-open` on Linux, `cmd /c start` on Windows. |
 | `"add_to_project"` | Append the folder to the current Sublime window's project. |
-| `"run_in_terminal"` | Open a terminal window with its cwd at the path — the folder itself, or a file's containing folder. Nothing is executed; you land in an interactive shell. See [Run in Terminal](#run-in-terminal). |
 
-The shipped defaults use these for **edit** (synthesized at runtime), **reveal**, **new window**, **run in terminal**, **system open**, and **add to project**.
-
-### Run in Terminal
-
-> **Currently disabled** (2026-09-02). The palette entry and both menu actions are unhooked
-> because the new iTerm window comes up empty when Sublime is the caller — see
-> [`docs/lessons.md`](docs/lessons.md). The code and settings below are intact; re-adding the two
-> entry points turns it back on.
-
-**Open URL: Run in Terminal** opens a terminal window in the folder of the file you're editing — the terminal-side sibling of [System Open this File](#system-open-this-file), no cursor target needed. The same thing is available as a **run in terminal** action in both the file and folder menus, for a path under the cursor. Nothing is executed either way: you land in an interactive shell at that folder, ready to type.
-
-(To *run* a script in a terminal instead, use a custom command with the [`terminal`](#custom-commands) field.)
-
-With `terminal_app` unset the OS default terminal is used:
-
-- **macOS** — the command is staged in a throwaway `.command` launcher and handed to `open`, so whichever app claims shell scripts takes it (check yours with `duti -x command`). That app decides window vs. tab.
-- **Linux** — the `x-terminal-emulator` alternatives symlink, falling back to `xterm`.
-- **Windows** — a new `cmd.exe` window (`start cmd /k`).
-
-Set `terminal_app` to pick the app explicitly:
-
-```json
-"terminal_app": "iTerm"
-```
-
-On macOS, `"iTerm"` and `"Terminal"` are driven via AppleScript, which **guarantees a new window** (plain `open` gives iTerm a tab, since iTerm honors its own preference). Any other value — an app name or an `.app` path — goes to `open -a`. On Linux it's the emulator binary, e.g. `"gnome-terminal"`.
-
-The launcher is handed to iTerm as the new session's `command`, never typed in with `write text`: writing text into a just-created session races the shell's startup, and on a cold iTerm the line lands at the prompt without ever running. One caveat outside our control — a **cold Terminal.app** also opens its own window at launch, so you briefly get two windows; iTerm doesn't.
+The shipped defaults use these for **edit** (synthesized at runtime), **reveal**, **new window**, **system open**, and **add to project**.
 
 ## `autoactions` — pre-select an action by file type
 
@@ -444,7 +414,6 @@ Open with **Preferences → Package Settings → Open URL → Settings**.
 | `paste_relative_path_markdown_backticks` | `true` | Wrap pasted paths in backticks in Markdown views. |
 | `plain_text_path_wrap_char` | `` "`" `` | Char enclosing a pasted path in non-Markdown views when it has a space (or other re-selection breaker) or a deep-link suffix. `""` = old behavior (quote only on breaking chars). |
 | `copy_path_wrap_char` | `` "`" `` | Char enclosing a path or deep link copied by **Copy Deep Link** / **Copy Transformed Path**. Deep links always; plain paths only on re-selection-breaking chars. `""` = copy bare. |
-| `terminal_app` | `""` | Terminal app for **Run in Terminal** and the **run in terminal** action. Empty = the OS default terminal. |
 
 ### Project-specific settings
 
@@ -489,7 +458,7 @@ If you use `pyenv`, [the `3.8` version](https://www.sublimetext.com/docs/api_env
 
 ## Credits
 
-Author: [@noahcoad](http://twitter.com/noahcoad). Long-time maintainer: [@kylebebak](https://github.com/kylebebak).
+Author: [@noahcoad](http://twitter.com/noahcoad).
 
 Inspired by [peterc's forum thread](http://www.sublimetext.com/forum/viewtopic.php?f=2&t=4243) and [KatsuomiK's gist](https://gist.github.com/3542836).
 

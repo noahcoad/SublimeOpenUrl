@@ -39,11 +39,6 @@
   // example: "/opt/homebrew/bin/python3 ~/scripts/shortpath.py {path}"
   "copy_path_transform": "",
 
-  // terminal app used by the "run in terminal" action. empty = the OS default terminal
-  // (on macOS, whichever app opens .command scripts; on Linux, x-terminal-emulator).
-  // example, osx: "iTerm"   example, linux: "gnome-terminal"
-  "terminal_app": "",
-
   // when pasting a relative path into a markdown file, wrap the result in backticks
   "paste_relative_path_markdown_backticks": true,
 
@@ -98,7 +93,7 @@
   // the "commands" field accepts:
   //   - an array (argv; the path is appended unless an element contains "$url")
   //   - a string (run via shell; "$url" replaced or path appended)
-  //   - a reserved sentinel: "edit_in_sublime", "open_in_new_window", "system_open", "add_to_project", "run_in_terminal"
+  //   - a reserved sentinel: "edit_in_sublime", "open_in_new_window", "system_open", "add_to_project"
   // Note: a synthetic "edit" entry is always prepended to this list at runtime,
   // which opens the file in Sublime (honoring any deep-link suffix). No need to
   // include it here.
@@ -107,7 +102,6 @@
     { "label": "reveal", "os": "windows", "commands": ["explorer", "/select,"] },
     { "label": "reveal", "os": "linux",   "commands": ["nautilus", "--browser"] },
     { "label": "new window",          "commands": "open_in_new_window" },
-    // { "label": "run in terminal",     "commands": "run_in_terminal" },   // paused 2026-09-02, see docs/lessons.md
     { "label": "system open",         "commands": "system_open" }
   ],
 
@@ -117,7 +111,6 @@
     { "label": "reveal", "os": "osx",     "commands": ["open"] },
     { "label": "reveal", "os": "windows", "commands": ["explorer"] },
     { "label": "reveal", "os": "linux",   "commands": ["nautilus", "--browser"] },
-    // { "label": "run in terminal",     "commands": "run_in_terminal" },   // paused 2026-09-02, see docs/lessons.md
     { "label": "add to project",      "commands": "add_to_project" }
   ],
 

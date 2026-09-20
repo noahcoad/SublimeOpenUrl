@@ -2541,91 +2541,8 @@ if "sublime" not in sys.modules:
 			# Fallback path adds a region; chosen is non-empty
 			self.assertTrue(len(chosen) >= 1)
 
-	# =====================================================================
-	# run in terminal
-	# =====================================================================
-
-	class TestRunInTerminal(unittest.TestCase):
-		def test_script_cds_and_keeps_shell(self):
-			"""Script cds and keeps shell."""
-			script = open_url._terminal_launcher_script("/tmp/d")
-			self.assertEqual(script.splitlines(), ["cd /tmp/d", 'exec "$SHELL" -il'])
-
-		def test_script_quotes_folder_with_spaces(self):
-			"""Script quotes folder with spaces."""
-			script = open_url._terminal_launcher_script("/tmp/my dir")
-			self.assertEqual(script, "cd '/tmp/my dir'\nexec \"$SHELL\" -il\n")
-
-		def test_nothing_is_executed(self):
-			"""Nothing is executed."""
-			self.assertEqual(len(open_url._terminal_launcher_script("/tmp/d").splitlines()), 2)
-
-		def test_iterm_uses_applescript_new_window(self):
-			"""Iterm uses applescript new window."""
-			args = open_url._osx_terminal_args("/tmp/l.command", "iTerm")
-			self.assertEqual(args[0], "osascript")
-			self.assertIn("create window with default profile", args[2])
-			self.assertIn("/tmp/l.command", args[2])
-
-		def test_iterm_never_types_the_launcher(self):
-			"""The launcher is the session's command, not text written to its shell.
-
-			``write text`` races the shell's startup: on a cold iTerm the line lands at
-			the prompt unexecuted.
-			"""
-			args = open_url._osx_terminal_args("/tmp/l.command", "iTerm")
-			self.assertNotIn("write text", args[2])
-			self.assertIn('command "/tmp/l.command"', args[2])
-
-		def test_iterm_app_path_is_recognized(self):
-			"""Iterm app path is recognized."""
-			args = open_url._osx_terminal_args("/tmp/l.command", "/Applications/iTerm.app")
-			self.assertEqual(args[0], "osascript")
-
-		def test_terminal_uses_do_script(self):
-			"""Terminal uses do script."""
-			args = open_url._osx_terminal_args("/tmp/l.command", "Terminal")
-			self.assertEqual(args[0], "osascript")
-			self.assertIn("activate", args[2])  # activate first: do script on a cold Terminal can fail
-			self.assertIn("do script", args[4])
-			self.assertIn('"/tmp/l.command"', args[4])
-
-		def test_no_app_uses_open(self):
-			"""No app uses open."""
-			self.assertEqual(open_url._osx_terminal_args("/tmp/l.command", ""), ["open", "/tmp/l.command"])
-
-		def test_other_app_uses_open_dash_a(self):
-			"""Other app uses open dash a."""
-			args = open_url._osx_terminal_args("/tmp/l.command", "WezTerm")
-			self.assertEqual(args, ["open", "-a", "WezTerm", "/tmp/l.command"])
-
-		def test_sentinel_is_registered(self):
-			"""Sentinel is registered."""
-			self.assertIn("run_in_terminal", open_url.BUILTIN_COMMANDS)
-
-		def test_palette_command_exists_and_needs_a_saved_file(self):
-			"""Palette command exists and needs a saved file."""
-			view = MockView("")
-			cmd = open_url.RunInTerminalCommand(view)
-			self.assertFalse(cmd.is_enabled())
-			view._file_name = "/tmp/d/notes.md"
-			self.assertTrue(cmd.is_enabled())
-
-		def test_palette_command_targets_the_files_folder(self):
-			"""Palette command targets the files folder."""
-			view = MockView("")
-			view._file_name = "/tmp/d/notes.md"
-			captured = []
-			saved = open_url.run_in_terminal
-			open_url.run_in_terminal = lambda path, app="": captured.append((path, app))
-			try:
-				open_url.RunInTerminalCommand(view).run()
-			finally:
-				open_url.run_in_terminal = saved
-			self.assertEqual(captured, [("/tmp/d", "")])
-
 	class TestWindowFlags(unittest.TestCase):
-		"""no_window() hides a child console on Windows; show_window() deliberately does not."""
+		"""no_window() hides a child console on Windows."""
 
 		def _with_platform(self, platform, fn):
 			"""Call fn() with sublime.platform() stubbed to platform.
@@ -2659,39 +2576,6 @@ if "sublime" not in sys.modules:
 			"""No window is a noop off windows."""
 			for platform in ("osx", "linux"):
 				self.assertNotIn("creationflags", self._with_platform(platform, open_url.no_window))
-
-		def test_show_window_never_adds_flags(self):
-			"""run_in_terminal wants a console on screen, so no platform may hide it."""
-			for platform in ("windows", "osx", "linux"):
-				kwargs = self._with_platform(platform, open_url.show_window)
-				self.assertNotIn("creationflags", kwargs)
-				self.assertNotIn("startupinfo", kwargs)
-
-		def test_show_window_passes_kwargs_through(self):
-			"""Show window passes kwargs through."""
-			self.assertEqual(self._with_platform("windows", lambda: open_url.show_window({"cwd": "/tmp"})), {"cwd": "/tmp"})
-
-		def test_run_in_terminal_launches_without_hiding_the_console(self):
-			"""Regression: the terminal launch must reach Popen with no window-hiding kwargs."""
-			captured = {}
-			launched = threading.Event()  # the launch is on a worker thread, so wait for it
-
-			class FakePopen:
-				def __init__(self, args, **kwargs):
-					"""Initialize."""
-					captured["args"] = args
-					captured["kwargs"] = kwargs
-					launched.set()
-
-			saved_popen = open_url.subprocess.Popen
-			open_url.subprocess.Popen = FakePopen
-			try:
-				self._with_platform("windows", lambda: open_url.run_in_terminal("/tmp/d/notes.md"))
-				self.assertTrue(launched.wait(5), "run_in_terminal never reached Popen")
-			finally:
-				open_url.subprocess.Popen = saved_popen
-			self.assertEqual(captured["kwargs"], {})
-			self.assertEqual(captured["args"][0], "cmd.exe")
 
 	class TestHeadingAnchors(unittest.TestCase):
 		"""heading_slug() / find_heading_slug_row(): markdown '#slug' resolves to a heading row."""

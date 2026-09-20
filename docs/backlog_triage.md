@@ -1,8 +1,17 @@
-# Backlog triage — 2026-09-08
+# Backlog triage — 2026-09-08, re-verified 2026-09-20
 
 State of the 13 open issues and 11 open PRs, checked against `master` at `3.1.1`.
 Nothing here has been closed or commented on yet — this is the assessment, pending
 Noah's call on the public actions.
+
+**Re-verified 2026-09-20 against `master` at `3.2.0`** (`eda09af`), 317 tests passing. Every
+"fixed" row below still holds, exercised through `find_selection` / `find_markdown_link_span` /
+`find_scheme_url_span` rather than read off the source. **One row moved: #56 is now fully fixed** —
+3.2.0's `find_heading_slug_row` resolves `[x](#heading)`, the one case that was still missing, which
+also **supersedes PR #74**. So the close list is **six issues, not five**: #51, #56, #57, #61, #64,
+#75. Also newly confirmed: quoted paths with spaces select whole (`"/home/a/my file.pdf"` →
+`/home/a/my file.pdf`), which answers @alec1's follow-up on #43, and `run_subprocess` passes an
+argument *list*, so spaces never hit a shell.
 
 **The one thing to know about the PRs:** all 11 are by **@eugenesvk**, all from
 April 2026, and they are a **stacked chain** — each says "stacked on top of the
@@ -14,7 +23,12 @@ are now moot. Do not try to merge the chain as a chain.
 
 ## Issues
 
-### Fixed — recommend closing with a pointer to the release
+**Posted and closed 2026-09-20: all six fixed issues — #51, #56, #57, #61, #64, #75.** Each got a
+short thank-you, an apology for the delay, one sentence on what fixed it, and an invitation to reopen.
+Logged in `~/txt/my/forum_threads.txt`. **7 open issues remain** (#27, #43, #52, #55, #63, #68, #69)
+and all 11 PRs are untouched.
+
+### Fixed — closed 2026-09-20
 
 | # | Title | Why it's fixed | Verified |
 |---|---|---|---|
@@ -22,13 +36,8 @@ are now moot. Do not try to merge the chain as a chain.
 | **#57** | Open error with default app on windows | The `system_open` sentinel has run `cmd.exe /c start "" <path>` since 3.0.0 — the empty title argument the reporter asked for. The old `["start"]` settings entry it complains about no longer exists. | ✅ `open_url.py` `system_open()` |
 | **#61** | URLs that contain commas | Fixed in **3.1.1** via `find_scheme_url_span`. | ✅ test `test_url_query_string_keeps_commas` |
 | **#75** | Opening a folder in Explorer raises an exception | Fixed in **3.1.1** — `run_subprocess` no longer uses `check_call`, so `explorer`'s bogus exit 1 doesn't raise. | ✅ code |
-| **#51** | Don't include the whole changelog for each update | Fixed back in 2.8.0 ("individual release file for each plugin version"). `messages.json` now has one file per version, which is exactly the PackageDev layout the reporter asked for. | ✅ `messages.json`, 12 entries |
-
-### Partially fixed — recommend narrowing, not closing
-
-| # | Title | Where it stands |
-|---|---|---|
-| **#56** | Relative Markdown links | Of the four examples: `[x](foo.md)` and `[x](baz.js)` now resolve from anywhere in the link (3.1.0). `[x](foo)` (no extension) depends on `file_suffixes` containing `.md`, which it doesn't by default. `[x](#heading)` is **not supported** — no anchor navigation. Recommend narrowing the issue to the heading-anchor case, which is what PR **#74** implements. |
+| **#51** | Don't include the whole changelog for each update | Fixed back in 2.8.0 ("individual release file for each plugin version"). `messages.json` now has one file per version, which is exactly the PackageDev layout the reporter asked for. | ✅ `messages.json`, 15 entries |
+| **#56** | Relative Markdown links | **Completed by 3.2.0.** All four examples resolve: `[x](foo.md)`, `[x](baz.js)`, `[x](foo)` and — the one that was missing at 3.1.1 — `[x](#heading)`, via `find_heading_slug_row`. | ✅ all four through `find_markdown_link_span`; `find_heading_slug_row` returns the heading row and `None` for an unmatched slug |
 
 ### Still open and real
 
@@ -36,15 +45,16 @@ are now moot. Do not try to merge the chain as a chain.
 |---|---|---|
 | **#68** | Very slow opening of some URLs with `.js` | Real. Each `file_suffixes` entry multiplies against `aliases` × `search_paths` × `file_prefixes`. 3.1.1 documents the cost in the setting but **keeps `[".js"]`**, because `test_file_suffixes_default_preserved` guards it as a 3.0.0 compatibility promise. **Needs your call** — see Open questions. |
 | **#55** | Cyrillic text in link | Not investigated. Almost certainly percent-encoding of non-ASCII before handoff to the browser. Reproducible from the issue's own URLs. |
+| **#63** | Open URL under the cursor | **Partly there** — `Default.sublime-mousemap` binds `alt`+double-click to `open_url`, so click-to-open works. But it uses `press_command: drag_select`, which *does* move the text cursor, and "without changing the text cursor position" was the literal ask. A `context`-guarded binding without `drag_select` would finish it. PR **#73** is the contributor's own version. Missing from the original triage tables — added 2026-09-20. |
 | **#69** | Help with settings for open in default application | A support question, now answerable: multi-line selection opens each line as its own target (3.0.0), and `.txt`/`.md` auto-edit via `autoactions` — which is why a list opens straight in Sublime with no menu. Images have no autoaction, so they should menu. Recommend replying with an `autoactions` example, then closing. |
 
 ### Stale — recommend closing as unactionable
 
 | # | Title | Why |
 |---|---|---|
-| **#27** | Fail to open URL (2014) | ST2/ST3-era, `C:/Teradata` vs `C:\Teradata`. Both reported versions are long unsupported. |
-| **#43** | `.pdf` fails to open on linux (2018) | Reporter's `mimeapps.list` / `xdg-open` configuration, not plugin logic. Went quiet in 2019. |
-| **#52** | Casing not preserved (2020) | Already labelled `can't repro`. |
+| **#27** | Fail to open URL (2014) | ST2/ST3-era, `C:/Teradata` vs `C:\Teradata`. Both reported versions are long unsupported. **Verified 2026-09-20:** all four forms now *select* correctly — `C:\Teradata`, `C:/Teradata`, and both with a trailing separator (@mkirzon's variant). The handoff itself is unverifiable without Windows, but nothing in today's selection layer reproduces the report. |
+| **#43** | `.pdf` fails to open on linux (2018) | Reporter's `mimeapps.list` / `xdg-open` configuration, not plugin logic. Went quiet in 2019. `system_open` now shells to `xdg-open` by default, so the custom `commands: ["thunar"]` workaround is no longer needed, and the spaces follow-up is handled (quoted paths select whole; args are passed as a list). |
+| **#52** | Casing not preserved (2020) | Already labelled `can't repro`. Still can't — `/tmp/TEST_FILE.txt` round-trips through `find_selection` unchanged. |
 
 ## PRs
 
@@ -59,7 +69,7 @@ stacked.
 | **#77** | Don't break on spaces on Windows with default application | +1/-1 | **Close as already fixed** — same ground as #57; `system_open` already passes the empty title. The settings line it patches no longer exists. |
 | **#70** | Disable potentially pathologically slow suffixes | +2/-2 | **Blocked on the `file_suffixes` decision** (Open questions). Its position is correct; the compat test is the obstacle. If you say drop it, this is a 2-line change — no need to merge the PR, but credit him. |
 | **#71** | Find URLs based on scope instead of chars | +137/-5 | **Superseded.** Its stated goal (`[handle⎀this](example.com)`) works now via `find_markdown_link_span`, without a scope dependency. Close with that explanation. |
-| **#74** | Open markdown heading links | +287/-8 | **Worth having** — implements the `#heading` half of #56, which nothing else covers. Needs a rebase; it's stacked on #71/#73. |
+| **#74** | Open markdown heading links | +287/-8 | **Superseded as of 3.2.0** (was "worth having" at 3.1.1). `find_heading_slug_row` + `goto_heading_anchor` shipped the `#heading` case independently. Close crediting the diagnosis — he was right that it was the gap in #56. |
 | **#73** | Mouse click enhancements | +239/-8 | **Worth considering** — closes #63. A `Default.sublime-mousemap` with `alt`+double-click already exists, so scope the overlap first. |
 | **#67** | Path indicators in the popup panels | +99/-5 | Reasonable UX addition, no issue behind it. Low risk, low urgency. |
 | **#62** | Granular feature flags | +44/-4 | Design decision: how much of the plugin should be switchable off. `autoactions` already covers part of the "don't bug me with edit suggestions" complaint. |
