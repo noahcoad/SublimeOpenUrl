@@ -150,6 +150,8 @@ After expanding the selection (using `delimiters`), Open URL tries the following
 
 Paths can be **absolute**, **relative to the current file**, or **relative to the project root**. Env vars and `~` are expanded. The selection can be tweaked further with [URL/Path Transforms](#url--path-transforms).
 
+Every one of those menus names its target on the panel's input line, so you can see **which** candidate the transforms actually resolved to before you pick an action — `📄` for a file (with any deep-link suffix, e.g. `📄 ~/txt/notes.md:42`), `📁` for a folder, `◆` for an `other_custom_commands` match, `🔍` for the fallback panel. Home is shown as `~`. The hint sits in the filter field, so it clears as soon as you type to narrow the list.
+
 ## Commands
 
 | Command | macOS | Linux/Windows |

@@ -1364,7 +1364,14 @@ class OpenUrlCommand(sublime_plugin.TextCommand):
 		searchers = self.config["web_searchers"]
 		opts = [f'{s["label"]} ({term})' for s in searchers]
 		opts.append(f"modify path ({term})")
-		sublime.active_window().show_quick_panel(opts, lambda idx: self.modify_or_search_done(idx, searchers, term))
+		sublime.active_window().show_quick_panel(
+			opts,
+			lambda idx: self.modify_or_search_done(idx, searchers, term),
+			0,
+			-1,
+			None,
+			placeholder=panel_placeholder("search", term),
+		)
 
 	def modify_or_search_done(self, idx: int, searchers, term: str):
 		"""Quick-panel callback for ``modify_or_search_action``: run a chosen web_searcher, or edit the term (last entry)."""
@@ -1396,7 +1403,14 @@ class OpenUrlCommand(sublime_plugin.TextCommand):
 			return
 
 		opts = [opener.get("label") for opener in openers]
-		sublime.active_window().show_quick_panel(opts, lambda idx: self.other_done(idx, openers, path))
+		sublime.active_window().show_quick_panel(
+			opts,
+			lambda idx: self.other_done(idx, openers, path),
+			0,
+			-1,
+			None,
+			placeholder=panel_placeholder("other", path),
+		)
 
 	def other_done(self, idx, openers, path):
 		"""Quick-panel callback for ``other_action``: invoke the chosen opener."""
@@ -1420,15 +1434,14 @@ class OpenUrlCommand(sublime_plugin.TextCommand):
 			return
 
 		opts = [*[opener.get("label") for opener in openers], "search..."]
-		if mode == "menu" and idx is not None:
-			sublime.active_window().show_quick_panel(
-				opts,
-				lambda i: self.folder_done(i, openers, folder, raw_folder),
-				0,
-				idx,
-			)
-		else:
-			sublime.active_window().show_quick_panel(opts, lambda i: self.folder_done(i, openers, folder, raw_folder))
+		sublime.active_window().show_quick_panel(
+			opts,
+			lambda i: self.folder_done(i, openers, folder, raw_folder),
+			0,
+			idx if mode == "menu" and idx is not None else -1,
+			None,
+			placeholder=panel_placeholder("folder", folder),
+		)
 
 	def folder_done(self, idx: int, openers: list[dict], folder: str, raw_folder: str):
 		"""Quick-panel callback for ``folder_action``: invoke the chosen opener or fall through to search."""
@@ -1460,17 +1473,14 @@ class OpenUrlCommand(sublime_plugin.TextCommand):
 			return
 
 		opts = ["edit", *[opener.get("label") for opener in openers], "search..."]
-		if auto_mode == "menu" and auto_idx is not None:
-			sublime.active_window().show_quick_panel(
-				opts,
-				lambda idx: self.file_done(idx, openers, path, raw_path, location),
-				0,
-				auto_idx,
-			)
-		else:
-			sublime.active_window().show_quick_panel(
-				opts, lambda idx: self.file_done(idx, openers, path, raw_path, location)
-			)
+		sublime.active_window().show_quick_panel(
+			opts,
+			lambda idx: self.file_done(idx, openers, path, raw_path, location),
+			0,
+			auto_idx if auto_mode == "menu" and auto_idx is not None else -1,
+			None,
+			placeholder=panel_placeholder("file", path, location),
+		)
 
 	def file_done(self, idx: int, openers: list[dict], path: str, raw_path: str, location: dict | None = None):
 		"""Quick-panel callback for ``file_action``.
@@ -1511,6 +1521,47 @@ def apply_path_transform(file_path: str, transform: str) -> tuple[str | None, st
 
 
 _RANGE_RE = re.compile(r"^(\d+)-(\d+)$")
+
+# Glyphs prefixing a quick-panel placeholder, by what the cascade resolved the text to.
+# Plain BMP symbols only: a coding font has to render these, so no control pictures.
+PANEL_GLYPHS = {"file": "\U0001f4c4", "folder": "\U0001f4c1", "other": "\u25c6", "search": "\U0001f50d"}
+
+
+def shorten_home(path: str) -> str:
+	"""``/Users/me/a/b`` -> ``~/a/b``. Display only — never fed back into the filesystem."""
+	home = os.path.expanduser("~")
+	if path == home:
+		return "~"
+	if path.startswith(home + os.sep):
+		return "~" + path[len(home) :]
+	return path
+
+
+def format_location(location: dict | None) -> str:
+	"""A deep link's location as the suffix that produced it (``:42``, ``:1-9``, ``:"txt"``, ``:/re/``)."""
+	if not location:
+		return ""
+	kind = location.get("type")
+	if kind == "line":
+		return ":%s" % location["value"]
+	if kind == "range":
+		return ":%s-%s" % (location["start"], location["end"])
+	line = ":%s" % location["line"] if location.get("line") else ""
+	if kind == "search":
+		return '%s:"%s"' % (line, location["value"])
+	if kind == "regex":
+		return "%s:/%s/" % (line, location["value"])
+	return ""
+
+
+def panel_placeholder(kind: str, target: str, location: dict | None = None) -> str:
+	"""Placeholder line for a quick panel: what the cascade actually resolved, not what was selected.
+
+	The menu lists actions ("edit", "reveal"), which say nothing about *which* candidate won after
+	aliases x search_paths x file_prefixes x file_suffixes. This is that answer.
+	"""
+	shown = shorten_home(target) if kind in ("file", "folder") else target
+	return "%s %s%s" % (PANEL_GLYPHS.get(kind, ""), shown, format_location(location))
 
 
 def parse_file_location(url: str, line_number_only: bool = False) -> tuple[str, dict | None]:

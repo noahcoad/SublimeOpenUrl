@@ -2242,6 +2242,97 @@ if "sublime" not in sys.modules:
 			finally:
 				_mock_sublime.platform = saved
 
+	class TestPanelPlaceholder(unittest.TestCase):
+		"""Every quick panel names what the cascade *resolved*, not the text that was selected."""
+
+		def test_shorten_home_collapses_the_home_prefix(self):
+			"""Home becomes ~; a path merely starting with the same chars is left alone."""
+			home = os.path.expanduser("~")
+			self.assertEqual(open_url.shorten_home(home + "/a/b.txt"), "~/a/b.txt")
+			self.assertEqual(open_url.shorten_home(home), "~")
+			self.assertEqual(open_url.shorten_home(home + "x/a.txt"), home + "x/a.txt")
+			self.assertEqual(open_url.shorten_home("/tmp/a.txt"), "/tmp/a.txt")
+
+		def test_format_location_round_trips_every_deep_link_form(self):
+			"""The suffix shown is the suffix that produced the location."""
+			cases = [
+				(None, ""),
+				({"type": "line", "value": 42}, ":42"),
+				({"type": "range", "start": 1, "end": 9}, ":1-9"),
+				({"type": "search", "value": "txt", "line": None}, ':"txt"'),
+				({"type": "search", "value": "txt", "line": 7}, ':7:"txt"'),
+				({"type": "regex", "value": "^a", "line": None}, ":/^a/"),
+				({"type": "regex", "value": "^a", "line": 7}, ":7:/^a/"),
+			]
+			for location, want in cases:
+				with self.subTest(location=location):
+					self.assertEqual(open_url.format_location(location), want)
+
+		def test_placeholder_shows_resolved_path_with_glyph(self):
+			"""A file placeholder carries the resolved path, not the selected word."""
+			self.assertEqual(open_url.panel_placeholder("file", "/tmp/src/users.js"), "\U0001f4c4 /tmp/src/users.js")
+			self.assertEqual(open_url.panel_placeholder("folder", "/tmp/src"), "\U0001f4c1 /tmp/src")
+			self.assertEqual(
+				open_url.panel_placeholder("file", "/tmp/a.txt", {"type": "line", "value": 42}),
+				"\U0001f4c4 /tmp/a.txt:42",
+			)
+
+		def test_placeholder_leaves_non_paths_unshortened(self):
+			"""'other' and 'search' targets aren't filesystem paths, so no ~ collapsing."""
+			self.assertEqual(open_url.panel_placeholder("other", "some text"), "◆ some text")
+			self.assertEqual(open_url.panel_placeholder("search", "foo bar"), "\U0001f50d foo bar")
+
+		def test_glyphs_render_outside_the_control_pictures_block(self):
+			"""Regression on PR #67's U+241C, which shows as an empty box in most coding fonts."""
+			for kind, glyph in open_url.PANEL_GLYPHS.items():
+				with self.subTest(kind=kind):
+					self.assertFalse(0x2400 <= ord(glyph) <= 0x243F, "%s uses a control picture" % kind)
+
+		def _panel_for(self, path, autoactions=None, openers=None):
+			"""Run file_action with a fake quick panel; return the captured args/kwargs."""
+			view = MockView()
+			view._window = MockWindow(project_data=None)
+			cmd = OpenUrlCommand(view)
+			cmd.config = dict(_DEFAULT_SETTINGS)
+			cmd.config["autoactions"] = autoactions or []
+			cmd.config["file_custom_commands"] = openers or []
+			panel = {}
+
+			def fake_panel(opts, on_done, *args, **kwargs):
+				"""Capture everything the panel was called with."""
+				panel["opts"] = opts
+				panel["args"] = args
+				panel["kwargs"] = kwargs
+
+			saved = _mock_sublime.active_window
+			_mock_sublime.active_window = lambda: type("W", (), {"show_quick_panel": staticmethod(fake_panel)})
+			try:
+				cmd.file_action(path, True, "users")
+			finally:
+				_mock_sublime.active_window = saved
+			return panel
+
+		def test_file_panel_placeholder_is_the_resolved_path(self):
+			"""The selected text was 'users'; the panel must name what it resolved to."""
+			panel = self._panel_for("/tmp/src/users.js")
+			self.assertEqual(panel["kwargs"]["placeholder"], "\U0001f4c4 /tmp/src/users.js")
+			self.assertNotIn("users\u0000", panel["kwargs"]["placeholder"])  # not the raw selection alone
+			self.assertNotEqual(panel["kwargs"]["placeholder"], "\U0001f4c4 users")
+
+		def test_autoaction_menu_prehighlight_survives_the_placeholder(self):
+			"""Regression on PR #67: adding a placeholder must not drop the autoactions selected_index."""
+			autoactions = [{"endswith": [".pdf"], "label": "reveal", "action": "menu"}]
+			openers = [{"label": "reveal", "commands": ["open", "-R"]}]
+			panel = self._panel_for("/tmp/a.pdf", autoactions=autoactions, openers=openers)
+			# args are (flags, selected_index, on_highlight); 'reveal' is index 1 after the synthetic 'edit'
+			self.assertEqual(panel["args"][1], 1)
+			self.assertEqual(panel["kwargs"]["placeholder"], "\U0001f4c4 /tmp/a.pdf")
+
+		def test_no_autoaction_leaves_nothing_prehighlighted(self):
+			"""Without a matching autoaction the panel opens with no row selected."""
+			panel = self._panel_for("/tmp/x.zzznottld")
+			self.assertEqual(panel["args"][1], -1)
+
 	class TestUserOverrideReplacesDefaults(unittest.TestCase):
 		"""Regression: user setting in load_settings cleanly replaces a default list."""
 
