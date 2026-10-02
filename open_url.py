@@ -365,10 +365,11 @@ def find_loc_sep(text: str, line_number_only: bool = False) -> int:
 	return -1
 
 
-# Inline markdown link ``[label](inner)``. Parens nest one level deep, so a wiki URL
-# like ``Rust_(language)`` stays whole. The target is carved out of ``inner`` below
-# rather than in the pattern, since it may hold spaces (a path) or a ``"title"`` suffix.
-_MD_LINK_RE = re.compile(r"\[[^\[\]]*\]\((?P<inner>[^()]*(?:\([^()]*\)[^()]*)*)\)")
+# Inline markdown link ``[label](inner)``. Brackets in the label and parens in the
+# target nest one level deep, so ``[[MASTER] deck.pptx](url)`` and a wiki URL like
+# ``Rust_(language)`` stay whole. The target is carved out of ``inner`` below rather
+# than in the pattern, since it may hold spaces (a path) or a ``"title"`` suffix.
+_MD_LINK_RE = re.compile(r"\[[^\[\]]*(?:\[[^\[\]]*\][^\[\]]*)*\]\((?P<inner>[^()]*(?:\([^()]*\)[^()]*)*)\)")
 
 # optional ``"title"`` after a markdown link target: ``[a](url "the title")``
 _MD_TITLE_RE = re.compile(r"\s+\"[^\"]*\"\s*$")

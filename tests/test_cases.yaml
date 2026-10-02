@@ -78,6 +78,11 @@ selection_cases:
      expected: "https://en.wikipedia.org/wiki/Rust_(language)"}
   - {label: md-link-deep-link-target, text: "[foo](~/txt/f.py:12:/^def foo/) x", cursor: 2,
      expected: "~/txt/f.py:12:/^def foo/"}
+  # brackets nested inside the label (``[[MASTER] deck.pptx](url)``) still resolve the target
+  - {label: md-link-nested-label-bracket, text: "[[MASTER] WorkSpacesAgentAccess_FeatureWalkthrough.pptx](https://amazon.sharepoint.com/:p:/s/WorkSpacesAgentAccess/IQAXVyxrc1eISZ-H4kAWnIyNASBX7l0V8dt-7HL8aU-DaCA)", cursor: 3,
+     expected: "https://amazon.sharepoint.com/:p:/s/WorkSpacesAgentAccess/IQAXVyxrc1eISZ-H4kAWnIyNASBX7l0V8dt-7HL8aU-DaCA"}
+  - {label: md-link-nested-label-mid, text: "[[MASTER] WorkSpacesAgentAccess_FeatureWalkthrough.pptx](https://amazon.sharepoint.com/:p:/s/WorkSpacesAgentAccess/IQAXVyxrc1eISZ-H4kAWnIyNASBX7l0V8dt-7HL8aU-DaCA)", cursor: 20,
+     expected: "https://amazon.sharepoint.com/:p:/s/WorkSpacesAgentAccess/IQAXVyxrc1eISZ-H4kAWnIyNASBX7l0V8dt-7HL8aU-DaCA"}
   - {label: md-link-second-of-two, text: "[a](one.txt) and [b](two.txt)", cursor: 19, expected: "two.txt"}
   - {label: md-link-outside-after, text: "[a](one.txt) and google.com", cursor: 20, expected: "google.com"}
   - {label: md-link-empty-target, text: "[a]() and google.com", cursor: 1, expected: "a"}
