@@ -205,8 +205,18 @@ In generated regexes, words are joined by a literal space for readability. Leadi
 | Cursor / selection state | Copies |
 |---|---|
 | Empty cursor on a blank line | `path:LINE` |
-| Empty cursor on a non-blank line | `path:LINE:/^first five words/` |
+| Empty cursor on a non-blank line | `path:LINE:/^line prefix/` |
 | Text selected | `path:LINE:"selected text"` |
+
+How much of the line the anchor covers is yours to set. `deep_link_anchor_unit` is either `"words"` (whole whitespace-separated words — the default, 5 of them) or `"chars"` (a straight character count, which may cut mid-word), and `deep_link_anchor_length` is how many. A length that's missing or not a positive integer falls back to 5 for `words` and 40 for `chars`.
+
+```json
+// 20 characters instead of 5 words
+"deep_link_anchor_unit": "chars",
+"deep_link_anchor_length": 20,
+```
+
+Shorter anchors are terser but match more loosely (the line-number hint breaks the tie); longer ones are near-unique but noisier to read and more fragile if you later reword the line.
 
 Set `deep_link_line_number_only: true` in your settings to drop the regex/search part and emit (and parse) line-number-only deep links — useful if you find loose regex anchors more annoying than helpful.
 
@@ -412,6 +422,8 @@ Open with **Preferences → Package Settings → Open URL → Settings**.
 | `other_custom_commands` | `[]` | Action menu for non-file/non-folder text. |
 | `autoactions` | (4 entries) | Per-extension auto-action rules. |
 | `deep_link_line_number_only` | `false` | When true, deep links are line numbers only (no `:"text"` or `:/regex/`). |
+| `deep_link_anchor_unit` | `"words"` | Unit for the **Copy Deep Link** regex anchor: `"words"` or `"chars"`. |
+| `deep_link_anchor_length` | `5` | How many words/chars of the line go in the anchor. Falls back to 5 (`words`) / 40 (`chars`) if invalid. |
 | `copy_path_transform` | `""` | Shell command for transforming file paths in Copy Deep Link / Copy Transformed Path. |
 | `paste_relative_path_markdown_backticks` | `true` | Wrap pasted paths in backticks in Markdown views. |
 | `plain_text_path_wrap_char` | `` "`" `` | Char enclosing a pasted path in non-Markdown views when it has a space (or other re-selection breaker) or a deep-link suffix. `""` = old behavior (quote only on breaking chars). |
@@ -464,4 +476,4 @@ Author: [@noahcoad](http://twitter.com/noahcoad).
 
 Inspired by [peterc's forum thread](http://www.sublimetext.com/forum/viewtopic.php?f=2&t=4243) and [KatsuomiK's gist](https://gist.github.com/3542836).
 
-See also: Noah's other [Sublime Text packages](https://gist.github.com/noahcoad/712ba4e38467f5126eb8cedd9ecbc842).
+See also: [Open URL](https://packagecontrol.io/packages/Open%20URL) and [other](https://packagecontrol.io/browse/authors/noahcoad) Sublime packages.

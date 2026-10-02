@@ -60,6 +60,8 @@ Settings = TypedDict(
 		"folder_custom_commands": list,
 		"other_custom_commands": list,
 		"deep_link_line_number_only": bool,
+		"deep_link_anchor_unit": str,
+		"deep_link_anchor_length": int,
 		"copy_path_transform": str,
 		"paste_relative_path_markdown_backticks": bool,
 		"plain_text_path_wrap_char": str,
@@ -83,6 +85,8 @@ settings_keys = [
 	"folder_custom_commands",
 	"other_custom_commands",
 	"deep_link_line_number_only",
+	"deep_link_anchor_unit",
+	"deep_link_anchor_length",
 	"copy_path_transform",
 	"paste_relative_path_markdown_backticks",
 	"plain_text_path_wrap_char",
@@ -1613,6 +1617,50 @@ def parse_file_location(url: str, line_number_only: bool = False) -> tuple[str, 
 	return (url, None)
 
 
+DEEP_LINK_ANCHOR_UNITS: frozenset[str] = frozenset({"words", "chars"})
+DEEP_LINK_ANCHOR_DEFAULTS = {"words": 5, "chars": 40}
+
+
+def read_anchor_config(config) -> tuple[str, int]:
+	"""Resolve ``deep_link_anchor_unit`` / ``deep_link_anchor_length`` from settings.
+
+	Accepts a Settings object or a plain dict. An unknown unit falls back to "words";
+	a missing/non-positive/non-integer length falls back to that unit's default.
+	"""
+	unit = config.get("deep_link_anchor_unit", "words")
+	if unit not in DEEP_LINK_ANCHOR_UNITS:
+		unit = "words"
+	length = config.get("deep_link_anchor_length", None)
+	if not isinstance(length, int) or isinstance(length, bool) or length < 1:
+		length = DEEP_LINK_ANCHOR_DEFAULTS[unit]
+	return (unit, length)
+
+
+def build_anchor_regex(line_text: str, unit: str = "words", length: int = 5) -> str:
+	"""Escaped regex body anchoring a deep link to the start of ``line_text``.
+
+	``unit`` is "words" (the first ``length`` whitespace-separated words) or "chars"
+	(the first ``length`` characters, which may cut mid-word). Either way the result
+	is right-trimmed so it never ends in a gap. Single spaces stay literal to keep
+	the link readable; any other whitespace run becomes ``\\s+``, else the regex
+	wouldn't match the very line it was copied from.
+
+	``line_text`` is expected already stripped, so parts[0] is always a word.
+	"""
+	if unit == "chars":
+		text = line_text[:length].rstrip()
+	else:
+		parts = re.split(r"(\s+)", line_text)  # words at even indexes, gaps at odd
+		text = "".join(parts[: max(1, length * 2 - 1)]).rstrip()
+	out = ""
+	for i, part in enumerate(re.split(r"(\s+)", text)):
+		if i % 2:
+			out += " " if part == " " else r"\s+"
+		else:
+			out += re.sub(r"([.^$*+?{}[\]\\|()/])", r"\\\1", part)
+	return out
+
+
 def _settings_obj():
 	"""Return the live ``open_url.sublime-settings`` Settings object (User-merged)."""
 	return sublime.load_settings("open_url.sublime-settings")
@@ -1640,11 +1688,13 @@ class CopyDeepLinkCommand(sublime_plugin.TextCommand):
 
 	Output forms based on selection state:
 	  - text selected      → file_path:LINE:"selected text"
-	  - empty + non-blank  → file_path:LINE:/^first five words/   (regex anchor,
+	  - empty + non-blank  → file_path:LINE:/^line prefix/         (regex anchor,
 	    words joined by a literal space; non-single-space gaps become \\s+)
 	  - empty + blank line → file_path:LINE                       (line number only)
 	The line-number hint is included with regex/search forms so navigation
 	can prefer the match nearest that line when the pattern is ambiguous.
+	How much of the line the anchor covers is set by ``deep_link_anchor_unit``
+	("words" or "chars") and ``deep_link_anchor_length``.
 	Setting ``deep_link_line_number_only`` collapses all three to line numbers.
 	Setting ``copy_path_transform`` pipes file_path through a shell command first.
 	Setting ``copy_path_wrap_char`` encloses the copied link (backtick by default),
@@ -1685,14 +1735,8 @@ class CopyDeepLinkCommand(sublime_plugin.TextCommand):
 				link = "%s:%d" % (file_path, line_num)
 			else:
 				has_leading = line_raw != line_raw.lstrip()
-				words = line_text.split()[:5]
-				escaped_words = [re.sub(r"([.^$*+?{}[\]\\|()/])", r"\\\1", w) for w in words]
-				# Keep single spaces literal so the link stays readable; only gaps that
-				# aren't one plain space become \s+ (else the regex wouldn't match its own line).
-				gaps = re.findall(r"\s+", line_text)[: len(words) - 1]
-				escaped = escaped_words[0]
-				for gap, word in zip(gaps, escaped_words[1:]):
-					escaped += (" " if gap == " " else r"\s+") + word
+				unit, length = read_anchor_config(config)
+				escaped = build_anchor_regex(line_text, unit, length)
 				prefix = r"^\s*" if has_leading else "^"
 				link = "%s:%d:/%s%s/" % (file_path, line_num, prefix, escaped)
 

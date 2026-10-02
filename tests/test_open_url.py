@@ -2349,14 +2349,87 @@ if "sublime" not in sys.modules:
 			finally:
 				_mock_sublime.load_settings = saved
 
+	class TestReadAnchorConfig(unittest.TestCase):
+		"""read_anchor_config(): unknown units and junk lengths fall back rather than raise."""
+
+		def test_defaults_when_unset(self):
+			"""Nothing configured means 5 words."""
+			self.assertEqual(open_url.read_anchor_config(_MockSettings({})), ("words", 5))
+
+		def test_explicit_values_pass_through(self):
+			"""Valid unit + length are used as given."""
+			cfg = _MockSettings({"deep_link_anchor_unit": "chars", "deep_link_anchor_length": 20})
+			self.assertEqual(open_url.read_anchor_config(cfg), ("chars", 20))
+
+		def test_unknown_unit_falls_back_to_words(self):
+			"""A typo'd unit shouldn't silently disable anchors."""
+			cfg = _MockSettings({"deep_link_anchor_unit": "letters", "deep_link_anchor_length": 3})
+			self.assertEqual(open_url.read_anchor_config(cfg), ("words", 3))
+
+		def test_per_unit_default_length(self):
+			"""chars with no length gets 40, not the 5 that suits words."""
+			self.assertEqual(open_url.read_anchor_config(_MockSettings({"deep_link_anchor_unit": "chars"})), ("chars", 40))
+
+		def test_invalid_length_falls_back(self):
+			"""Zero, negative, bool, float, and string lengths all fall back to the unit default."""
+			for bad in (0, -1, True, 2.5, "20", None):
+				with self.subTest(bad=bad):
+					cfg = _MockSettings({"deep_link_anchor_unit": "chars", "deep_link_anchor_length": bad})
+					self.assertEqual(open_url.read_anchor_config(cfg), ("chars", 40))
+
+		def test_accepts_plain_dict(self):
+			"""Works against a merged project-settings dict, not just a Settings object."""
+			self.assertEqual(open_url.read_anchor_config({"deep_link_anchor_length": 2}), ("words", 2))
+
+	class TestBuildAnchorRegex(unittest.TestCase):
+		"""build_anchor_regex(): truncation by unit, escaping, and gap handling."""
+
+		def test_words_default(self):
+			"""Five words, single spaces kept literal."""
+			self.assertEqual(open_url.build_anchor_regex("a b c d e f g"), "a b c d e")
+
+		def test_words_stops_at_length(self):
+			"""Word mode never cuts mid-word."""
+			self.assertEqual(open_url.build_anchor_regex("alpha beta gamma", "words", 2), "alpha beta")
+
+		def test_chars_cuts_mid_word(self):
+			"""Char mode is a blunt character count."""
+			self.assertEqual(open_url.build_anchor_regex("alpha beta gamma", "chars", 8), "alpha be")
+
+		def test_regex_metachars_escaped(self):
+			"""Metacharacters in the line body are escaped, including the / delimiter."""
+			self.assertEqual(open_url.build_anchor_regex("a.b*c(d)/e", "chars", 20), r"a\.b\*c\(d\)\/e")
+
+		def test_non_single_space_gaps_become_backslash_s(self):
+			"""Tabs and runs of spaces can't be emitted literally and still match."""
+			self.assertEqual(open_url.build_anchor_regex("a\tb  c", "words", 3), r"a\s+b\s+c")
+
+		def test_trailing_gap_trimmed(self):
+			"""Neither unit may leave a trailing space or \\s+ on the result."""
+			self.assertEqual(open_url.build_anchor_regex("ab cd", "chars", 3), "ab")
+			self.assertEqual(open_url.build_anchor_regex("ab\tcd", "chars", 3), "ab")
+
+		def test_single_word_line(self):
+			"""A one-word line has no gaps to reason about."""
+			self.assertEqual(open_url.build_anchor_regex("single", "words", 5), "single")
+
+		def test_result_always_matches_source(self):
+			"""The whole point: the emitted regex matches the line it came from."""
+			for text in ("a.b*c  d", "team's   plan | next?", "one\ttwo three", "x"):
+				for unit in ("words", "chars"):
+					for length in (1, 3, 5, 50):
+						with self.subTest(text=text, unit=unit, length=length):
+							self.assertRegex(text, open_url.build_anchor_regex(text, unit, length))
+
 	class TestCopyDeepLinkBuildsLink(unittest.TestCase):
 		"""Smoke test the link-building branches without exercising the subprocess path."""
 
-		def _run(self, text, cursor=None, selection=None, line_only=False, wrap=""):
+		def _run(self, text, cursor=None, selection=None, line_only=False, wrap="", anchor=None):
 			"""Helper that drives CopyDeepLinkCommand under controlled conditions.
 
 			``wrap`` defaults to "" so these cases assert the link construction itself;
 			the copy_path_wrap_char enclosure is covered separately below.
+			``anchor`` is an optional (unit, length) pair; omitted means the defaults.
 			"""
 			view = MockView(text)
 			view._file_name = "/tmp/foo.md"
@@ -2369,9 +2442,10 @@ if "sublime" not in sys.modules:
 			saved_clip = _mock_sublime.set_clipboard
 			saved_settings = _mock_sublime.load_settings
 			_mock_sublime.set_clipboard = lambda x: captured.setdefault("clip", x)
-			_mock_sublime.load_settings = lambda name: _MockSettings(
-				{"copy_path_transform": "", "deep_link_line_number_only": line_only, "copy_path_wrap_char": wrap}
-			)
+			cfg = {"copy_path_transform": "", "deep_link_line_number_only": line_only, "copy_path_wrap_char": wrap}
+			if anchor is not None:
+				cfg["deep_link_anchor_unit"], cfg["deep_link_anchor_length"] = anchor
+			_mock_sublime.load_settings = lambda name: _MockSettings(cfg)
 			try:
 				cmd = open_url.CopyDeepLinkCommand(view)
 				cmd.run()
@@ -2425,6 +2499,50 @@ if "sublime" not in sys.modules:
 					if loc["type"] != "regex":
 						continue
 					self.assertRegex(text, loc["value"])
+
+		def test_anchor_unit_chars_truncates_mid_word(self):
+			"""deep_link_anchor_unit=chars takes a raw character count, word boundaries be damned."""
+			link = self._run("hello world foo bar\nnext", cursor=0, anchor=("chars", 14))
+			self.assertEqual(link, "/tmp/foo.md:1:/^hello world fo/")
+
+		def test_anchor_unit_chars_trims_trailing_gap(self):
+			"""A cut landing inside a gap must not leave a dangling space/\\s+ in the regex."""
+			self.assertEqual(self._run("ab cd\nnext", cursor=0, anchor=("chars", 3)), "/tmp/foo.md:1:/^ab/")
+			self.assertEqual(self._run("ab\t\tcd\nnext", cursor=0, anchor=("chars", 4)), "/tmp/foo.md:1:/^ab/")
+
+		def test_anchor_unit_words_honors_length(self):
+			"""deep_link_anchor_length changes how many words the anchor covers."""
+			self.assertEqual(self._run("a b c d e f\nnext", cursor=0, anchor=("words", 2)), "/tmp/foo.md:1:/^a b/")
+			self.assertEqual(self._run("a b c d e f\nnext", cursor=0, anchor=("words", 6)), "/tmp/foo.md:1:/^a b c d e f/")
+
+		def test_anchor_length_longer_than_line_uses_whole_line(self):
+			"""Asking for more than the line holds is not an error -- take what's there."""
+			for anchor in (("words", 99), ("chars", 99)):
+				with self.subTest(anchor=anchor):
+					self.assertEqual(self._run("a b\nnext", cursor=0, anchor=anchor), "/tmp/foo.md:1:/^a b/")
+
+		def test_generated_regex_matches_its_own_line_under_any_anchor(self):
+			"""The self-match invariant must hold for every anchor setting, not just the default."""
+			for text in (
+				'# 2026-08-05 "The Containment Brothers"',
+				"hello world foo bar baz qux",
+				"\t\tindented line here with words",
+				"a.b*c  d",
+				"team's   plan | next?",
+				"| `col` | `false` | When true",
+				"one\ttwo three four five",
+				"single",
+				"a\\b (c) [d]",
+			):
+				for unit in ("words", "chars"):
+					for length in (1, 2, 3, 5, 8, 20, 40):
+						with self.subTest(text=text, unit=unit, length=length):
+							link = self._run(text + "\nnext", cursor=len(text), anchor=(unit, length))
+							_, loc = parse_file_location(link)
+							self.assertIsNotNone(loc, "link did not parse: %s" % link)
+							if loc["type"] != "regex":
+								continue
+							self.assertRegex(text, loc["value"])
 
 		def test_text_selected_uses_search(self):
 			"""Text selected uses search."""

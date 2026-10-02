@@ -34,6 +34,13 @@
   // when true, deep links only support line numbers (file:42), not :"text" or :/regex/
   "deep_link_line_number_only": false,
 
+  // how much of the line Copy Deep Link puts in the /^regex/ anchor.
+  // unit is "words" (whole whitespace-separated words) or "chars" (a character count,
+  // which may cut mid-word). length must be a positive integer; if omitted or invalid
+  // it falls back to 5 for "words" and 40 for "chars".
+  "deep_link_anchor_unit": "words",
+  "deep_link_anchor_length": 5,
+
   // optional shell command run by Copy Deep Link / Copy Transformed Path; {path} is replaced with
   // the current file's path (shell-quoted), and the command's stdout becomes the new path.
   // example: "/opt/homebrew/bin/python3 ~/scripts/shortpath.py {path}"
