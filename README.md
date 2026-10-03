@@ -148,6 +148,8 @@ After expanding the selection (using `delimiters`), Open URL tries the following
 4. **`other_custom_commands` match** — passes the text to whatever shell command you've configured.
 5. **Fallback** — show the modify-or-search panel, populated from `web_searchers`.
 
+In source code, a comment marker glued to a path is left out — `#~/notes.txt` opens `~/notes.txt`, `//src/app.js` opens `src/app.js` — because the marker's syntax scope matches `scope_stop`. If the full token is a path that exists (`//etc/hosts`), it wins.
+
 Paths can be **absolute**, **relative to the current file**, or **relative to the project root**. Env vars and `~` are expanded. The selection can be tweaked further with [URL/Path Transforms](#url--path-transforms).
 
 Every one of those menus names its target on the panel's input line, so you can see **which** candidate the transforms actually resolved to before you pick an action — `📄` for a file (with any deep-link suffix, e.g. `📄 ~/txt/notes.md:42`), `📁` for a folder, `◆` for an `other_custom_commands` match, `🔍` for the fallback panel. Home is shown as `~`. The hint sits in the filter field, so it clears as soon as you type to narrow the list.
@@ -409,6 +411,7 @@ Open with **Preferences → Package Settings → Open URL → Settings**.
 | Setting | Default | Purpose |
 |---|---|---|
 | `delimiters` | `" \t\n\r\"'`` `,*<>[](){}` ` | Selection-expansion terminators (Markdown-friendly defaults). Text wrapped in any matched pair — `""` `''` ` `` ` `()` `[]` `{}` `<>` — selects whole, so paths with spaces work. |
+| `scope_stop` | `"punctuation.definition.comment"` | [Selector](https://www.sublimetext.com/docs/selectors.html) for scopes that also end the selection, so a comment marker glued to a path (`#~/notes.txt`, `//src/app.js`) is left out. If the marker turns out to be part of a path that exists (`//etc/hosts`), the full token is kept. `""` turns this off. |
 | `trailing_delimiters` | `";.:"` | Recursively stripped from the end of the URL/path. |
 | `web_browser` | `""` | Browser name (from [Python's `webbrowser` list](https://docs.python.org/3.3/library/webbrowser.html)). Empty = system default. |
 | `web_browser_path` | `""` | Explicit browser executable path. Overrides `web_browser`. |

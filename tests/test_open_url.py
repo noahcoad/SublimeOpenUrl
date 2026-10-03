@@ -178,6 +178,11 @@ if "sublime" not in sys.modules:
 				return self.text[pos]
 			return ""
 
+		def match_selector(self, pos, selector):
+			"""Prefix-match ``selector`` (comma = or) against the scope set via ``self.scopes``."""
+			scope = getattr(self, "scopes", {}).get(pos, "")
+			return any(a == sel or a.startswith(sel + ".") for sel in (x.strip() for x in selector.split(",")) if sel for a in scope.split())
+
 		def size(self):
 			"""Return the total length of the buffer."""
 			return len(self.text)
@@ -1034,6 +1039,66 @@ if "sublime" not in sys.modules:
 		cmd = OpenUrlCommand(view)
 		cmd.config = dict(_DEFAULT_SETTINGS)
 		return view.substr(cmd.find_selection()).strip()
+
+	def _expand_scoped(text, cursor, marks=(), scope_stop="punctuation.definition.comment"):
+		"""find_selection() text with chars in ``marks`` (substrings of ``text``) scoped as comment markers."""
+		view = MockView(text)
+		view._window = MockWindow(project_data=None)
+		view.scopes = {}
+		for m in marks:
+			i = text.index(m)
+			view.scopes.update({p: "source.python comment.line punctuation.definition.comment.python" for p in range(i, i + len(m))})
+		view.set_cursor(cursor)
+		cmd = OpenUrlCommand(view)
+		cmd.config = dict(_DEFAULT_SETTINGS, scope_stop=scope_stop)
+		return view.substr(cmd.find_selection()).strip()
+
+	class TestScopeStop(unittest.TestCase):
+		"""scope_stop: a comment marker glued to a path isn't part of the token (#66)."""
+
+		def test_hash_marker_glued_to_path(self):
+			"""#~/notes.txt selects ~/notes.txt."""
+			self.assertEqual(_expand_scoped("#~/no-such-file.txt", 5, ["#"]), "~/no-such-file.txt")
+
+		def test_slash_marker_glued_to_relative_path(self):
+			"""//src/app.js selects src/app.js."""
+			self.assertEqual(_expand_scoped("x = 1 //src/app.js", 12, ["//"]), "src/app.js")
+
+		def test_marker_glued_to_existing_absolute_path(self):
+			"""#/abs/path keeps the path, drops the marker."""
+			with tempfile.NamedTemporaryFile(suffix=".txt") as f:
+				self.assertEqual(_expand_scoped("#" + f.name, 4, ["#"]), f.name)
+
+		def test_full_token_wins_when_only_it_resolves(self):
+			"""//etc/hosts: the POSIX double-slash path exists, the marker-less relative one doesn't."""
+			with tempfile.NamedTemporaryFile(suffix=".txt") as f:
+				text = "/" + f.name
+				self.assertEqual(_expand_scoped(text, 5, ["//"]), text)
+
+		def test_block_comment_markers_both_sides(self):
+			"""/*~/a.txt*/ selects ~/a.txt."""
+			self.assertEqual(_expand_scoped("/*~/no-such-a.txt*/", 6, ["/*", "*/"]), "~/no-such-a.txt")
+
+		def test_cursor_on_marker_falls_back(self):
+			"""Cursor between the slashes of // gets the whole token, not an empty one."""
+			self.assertEqual(_expand_scoped("//src/app.js", 1, ["//"]), "//src/app.js")
+
+		def test_unscoped_text_unchanged(self):
+			"""Without a comment scope (markdown, plain text), //example.com stays whole."""
+			self.assertEqual(_expand_scoped("see //example.com now", 8), "//example.com")
+
+		def test_empty_setting_disables(self):
+			"""scope_stop "" restores the old behavior."""
+			self.assertEqual(_expand_scoped("#~/no-such-file.txt", 5, ["#"], scope_stop=""), "#~/no-such-file.txt")
+
+		def test_comma_selector(self):
+			"""Selector lists work, so users can add their own scopes."""
+			self.assertEqual(_expand_scoped("#~/no-such-file.txt", 5, ["#"], scope_stop="string.quoted, punctuation.definition.comment"), "~/no-such-file.txt")
+
+		def test_inside_enclosing_pair(self):
+			"""The bare-token fallback inside an enclosing pair honors scope_stop too."""
+			with tempfile.NamedTemporaryFile(suffix=".txt") as f:
+				self.assertEqual(_expand_scoped("(#" + f.name + " prose)", 6, ["#"]), f.name)
 
 	class TestFindSelection(unittest.TestCase):
 		def test_http_url_full(self):

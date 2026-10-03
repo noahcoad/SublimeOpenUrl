@@ -6,6 +6,12 @@
   // token, so a path containing spaces selects whole from any cursor position.
   "delimiters": " \t\n\r\"'`,*<>[](){}",
 
+  // selector for scopes that also end a bare token, so a comment marker glued to a
+  // path -- #~/notes.txt, //src/app.js, --./init.lua -- isn't part of the path.
+  // when the marker really is part of it (//etc/hosts resolves, etc/hosts doesn't),
+  // the full token is kept. any Sublime selector works; "" turns this off.
+  "scope_stop": "punctuation.definition.comment",
+
   // if these delimiting characters are seen at the end of the URL, they are removed, e.g. sublimetext.com.; becomes sublimetext.com
   "trailing_delimiters": ";.:",
 

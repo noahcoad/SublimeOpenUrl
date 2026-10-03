@@ -48,6 +48,7 @@ Settings = TypedDict(
 	"Settings",
 	{
 		"delimiters": str,
+		"scope_stop": str,
 		"trailing_delimiters": str,
 		"web_browser": str,
 		"web_browser_path": list,
@@ -73,6 +74,7 @@ Settings = TypedDict(
 # these are necessary to convert settings object to a dict, which can then be merged with project settings
 settings_keys = [
 	"delimiters",
+	"scope_stop",
 	"trailing_delimiters",
 	"web_browser",
 	"web_browser_path",
@@ -901,15 +903,31 @@ class OpenUrlCommand(sublime_plugin.TextCommand):
 			wrapped = sublime.Region(line_begin + enclosing[0], line_begin + enclosing[1])
 			if self._resolves_strictly(self.view.substr(wrapped).strip()):
 				return wrapped
-			bare = self._bare_token_region(start, end, line_text, line_begin)
+			bare = self._scoped_bare_region(start, end, line_text, line_begin)
 			if self._resolves_strictly(self.view.substr(bare).strip()):
 				return bare
 			return wrapped
 
-		return self._bare_token_region(start, end, line_text, line_begin)
+		return self._scoped_bare_region(start, end, line_text, line_begin)
 
-	def _bare_token_region(self, start: int, end: int, line_text: str, line_begin: int) -> "sublime.Region":
-		"""Expand ``start``/``end`` outward over an unwrapped token, stopping at TOKEN_TERMINATORS.
+	def _scoped_bare_region(self, start: int, end: int, line_text: str, line_begin: int) -> "sublime.Region":
+		"""Bare token that also stops at the ``scope_stop`` selector, e.g. a comment marker glued to a path.
+
+		Falls back to the plain token when the scoped one is empty (cursor on the marker) or
+		the marker really was part of the path: ``//etc/hosts`` resolves, ``etc/hosts`` doesn't.
+		"""
+		bare = self._bare_token_region(start, end, line_text, line_begin)
+		stop = self.config.get("scope_stop") or ""
+		if not stop: return bare
+		scoped = self._bare_token_region(start, end, line_text, line_begin, stop)
+		scoped_text = self.view.substr(scoped).strip()
+		if not scoped_text: return bare
+		if not self._resolves_strictly(scoped_text) and self._resolves_strictly(self.view.substr(bare).strip()): return bare
+		return scoped
+
+	def _bare_token_region(self, start: int, end: int, line_text: str, line_begin: int, scope_stop: str = "") -> "sublime.Region":
+		"""Expand ``start``/``end`` outward over an unwrapped token, stopping at TOKEN_TERMINATORS
+		and, when given, at chars matching the ``scope_stop`` selector.
 
 		Deep-link suffixes (``:42``, ``:"text"``, ``:/regex/``) stay attached, as do
 		``${VAR}`` braces and backslash-escaped chars.
@@ -921,6 +939,7 @@ class OpenUrlCommand(sublime_plugin.TextCommand):
 		# ${VAR} braces are part of the path, so they never terminate the token
 		def is_term(pos: int) -> bool:
 			"""True if the char at view position ``pos`` ends the bare token."""
+			if scope_stop and self.view.match_selector(pos, scope_stop): return True
 			return self.view.substr(pos) in terminator and (pos - line_begin) not in skip
 
 		# walk back to nearest terminator (treat backslash-escaped chars as part of the token)
